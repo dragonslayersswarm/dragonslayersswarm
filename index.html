@@ -95,6 +95,8 @@
   .mi:focus-visible::before,.mi:focus-visible::after{opacity:1;transform:translateY(-50%) scale(1)}
   .mi--primary{color:var(--gold);font-size:.95rem}
   .mi--coop{color:#8FB0FF}
+  .mi--coop::after{content:'·  2–6 players';font-family:var(--mono);font-size:.5rem;letter-spacing:.16em;
+    color:var(--bone);margin-left:.6rem;vertical-align:middle}
   .mi--quit{color:rgba(155,147,126,.5);font-size:.72rem;margin-top:.9rem}
 
   .btn--ghost{border-color:rgba(232,220,192,.28);color:var(--bone)}
@@ -369,6 +371,22 @@
   .item--over{box-shadow:0 0 6px #C0503A88}
   .item .ct{position:absolute;bottom:-1px;right:1px;font-size:.5rem;color:var(--parchment)}
 
+  /* ---------- ITEM PICKUP CHOICE ---------- */
+  #itemchoice{background:rgba(6,5,10,.9);backdrop-filter:blur(3px);z-index:32}
+  .ic-wrap{text-align:center;width:min(360px,92vw)}
+  .ic-h{font-family:var(--display);font-size:1.4rem;color:var(--gold);letter-spacing:.06em;margin-bottom:1.1rem}
+  .ic-card{border:1px solid;background:rgba(255,255,255,.02);padding:1.4rem 1.2rem;display:flex;
+    flex-direction:column;align-items:center;gap:.5rem}
+  .ic-icon{width:46px;height:46px;display:grid;place-items:center;image-rendering:pixelated}
+  .ic-rar{font-family:var(--mono);font-size:.58rem;letter-spacing:.22em;text-transform:uppercase}
+  .ic-nm{font-family:var(--display);font-size:1.25rem;color:var(--parchment)}
+  .ic-ds{font-family:var(--mono);font-size:.58rem;letter-spacing:.14em;text-transform:uppercase;color:var(--bone)}
+  .ic-fx{font-family:var(--mono);font-size:.9rem;border-top:1px solid rgba(232,220,192,.14);
+    padding-top:.7rem;margin-top:.3rem;width:100%}
+  .ic-warn{font-family:var(--body);font-size:.74rem;font-style:italic;color:#C0503A}
+  .ic-btns{display:flex;gap:.7rem;justify-content:center;margin-top:1.2rem}
+  .ic-hint{font-family:var(--mono);font-size:.55rem;letter-spacing:.16em;color:var(--bone);opacity:.7;margin-top:.9rem}
+
   /* ---------- LEVEL UP ---------- */
   #overlay-levelup{background:rgba(6,5,10,.86);backdrop-filter:blur(3px);z-index:30}
   .lvl-econ{display:flex;gap:.8rem;margin-top:1.6rem;justify-content:center}
@@ -632,6 +650,9 @@
     <div class="lvl-econ" id="lvl-econ"></div>
   </div>
 
+  <!-- ITEM PICKUP CHOICE -->
+  <div class="screen hidden" id="itemchoice"></div>
+
   <!-- GAME OVER -->
   <div class="screen hidden" id="overlay-gameover">
     <h1 id="go-title">The Swarm Takes You</h1>
@@ -790,7 +811,7 @@ const ARCH = {
   aura:   { icon:'aura',   base:{ dmg:5,  cd:0.5,  size:96 } },
   nova:   { icon:'nova',   base:{ dmg:20, cd:2.8,  size:150, speed:520 } },
   beam:   { icon:'beam',   base:{ dmg:26, cd:2.2,  size:22, dur:0.22, len:620 } },
-  chain:  { icon:'chain',  base:{ dmg:15, cd:1.9,  count:4, size:0, range:190 } },
+  chain:  { icon:'chain',  base:{ dmg:15, cd:1.9,  count:4, size:0, range:190 } },   // reach = 'range'
   zone:   { icon:'zone',   base:{ dmg:7,  cd:2.6,  size:78, dur:4.0, tick:0.4 } },
   summon: { icon:'summon', base:{ dmg:13, cd:0.7,  count:1, speed:160, size:11 } },
   trail:  { icon:'trail',  base:{ dmg:6,  cd:0.14, size:24, dur:2.2, tick:0.35 } },
@@ -972,6 +993,34 @@ const ROLE_TUNE = {
    (cd 1.18) and small (size 0.85), and those two costs are exactly what the
    coefficient is paying for.
 ======================================================================== */
+/* ORDER TRAITS.
+   Stat multipliers alone made every order feel the same — the complaint was
+   fair: "they all just get a projectile, chain, aura, field with a diff name."
+   Every art an order casts now carries its order's signature on hit, so Ember
+   burns, Tide drags, Umbral executes. Same nine archetypes, nine ways to play. */
+const ORDER_TRAIT = {
+  fire:      { name:'Kindle',   desc:'Your hits set the wound burning — damage over time that stacks.' },
+  water:     { name:'Undertow', desc:'Your hits drag: struck dragons are slowed, and slowed further as you keep at them.' },
+  nature:    { name:'Snare',    desc:'Your hits take root — a chance to hold a dragon fast where it stands.' },
+  rock:      { name:'Stagger',  desc:'Your hits land like a landslide, shoving dragons back off their footing.' },
+  iron:      { name:'Sunder',   desc:'Your hits cut the scale away; every wound makes the next one bite deeper.' },
+  sky:       { name:'Gust',     desc:'Your hits scatter the swarm outward, buying you the room to keep moving.' },
+  light:     { name:'Mercy',    desc:'Your hits carry a little of the dawn back to you — small, steady healing.' },
+  shadow:    { name:'Execute',  desc:'Your hits mark the wounded; a dragon near death simply stops being alive.' },
+  lightning: { name:'Arc',      desc:'Your hits leap — a portion of the strike jumps to whatever stands nearest.' },
+};
+const TRAIT_TUNE = {
+  burnDps:0.55, burnTime:3,     // fire
+  slowStep:0.18, slowMax:0.65, slowTime:2.5,   // water
+  rootChance:0.10, rootTime:0.7,               // nature
+  shove:190,                                   // rock
+  sunderStep:0.06, sunderMax:0.40,             // iron
+  gust:120,                                    // sky
+  mercy:0.012,                                 // light — fraction of max hp
+  execute:0.14, markBonus:0.25,                // shadow
+  arcShare:0.35, arcRange:150,                 // lightning
+};
+
 const EL_IDENTITY = {
   fire:      { dmg:1.192, cd:1.00, size:0.95, dur:0.80, count:0 },  // burns hot, burns out
   water:     { dmg:0.771, cd:1.02, size:1.05, dur:1.40, count:0 },  // lingers
@@ -1019,15 +1068,31 @@ function rollRarity(minutes){
 }
 
 /* ----------------------- ABILITY UPGRADE KINDS -------------------------- */
+/* Every upgrade here is offered ONLY to archetypes that actually read the stat,
+   and its label changes to say what it does for that art. Before this, chain
+   could be offered '+Area' (its size is 0 and never read — a dead pick) and a
+   bolt's 'Duration' gave no hint that it means flight time, i.e. range. */
 const UPGRADES = [
-  { key:'dmg',    label:'Damage',           v:0.22, pct:true,  fits:()=>true },
-  { key:'cd',     label:'Cast Speed',       v:0.14, pct:true,  fits:()=>true },
-  { key:'size',   label:'Area',             v:0.16, pct:true,  fits:()=>true },
-  { key:'dur',    label:'Duration',         v:0.24, pct:true,  fits:a=>['zone','trail','beam','bolt'].includes(a.def.arch) },
-  { key:'count',  label:'Projectiles',      v:1,    pct:false, fits:a=>['bolt','orbit','chain','summon'].includes(a.def.arch) },
-  { key:'pierce', label:'Pierce',           v:1,    pct:false, fits:a=>['bolt'].includes(a.def.arch) },
-  { key:'speed',  label:'Velocity',         v:0.20, pct:true,  fits:a=>['bolt','nova','summon','orbit'].includes(a.def.arch) },
+  { key:'dmg',    label:'Damage',      v:0.22, pct:true,  fits:()=>true },
+  { key:'cd',     label:'Cast Speed',  v:0.14, pct:true,  fits:()=>true },
+  { key:'size',   label:'Area',        v:0.16, pct:true,
+    fits:a=>['bolt','orbit','aura','nova','beam','zone','summon','trail'].includes(a.def.arch),
+    labelFor:a=>({bolt:'Projectile Size',orbit:'Orb Size',beam:'Beam Width',
+                  summon:'Minion Size'}[a.def.arch] || 'Area') },
+  { key:'dur',    label:'Duration',    v:0.24, pct:true,
+    fits:a=>['zone','trail','beam','bolt'].includes(a.def.arch),
+    labelFor:a=>({bolt:'Flight Time'}[a.def.arch] || 'Duration') },
+  { key:'count',  label:'Projectiles', v:1,    pct:false,
+    fits:a=>['bolt','orbit','chain','summon'].includes(a.def.arch),
+    labelFor:a=>({orbit:'Orbs',chain:'Chain Jumps',summon:'Minions'}[a.def.arch] || 'Projectiles') },
+  { key:'pierce', label:'Pierce',      v:1,    pct:false, fits:a=>a.def.arch==='bolt' },
+  { key:'speed',  label:'Velocity',    v:0.20, pct:true,
+    fits:a=>['bolt','nova','summon','orbit'].includes(a.def.arch),
+    labelFor:a=>({nova:'Expansion Speed',orbit:'Spin Speed',summon:'Minion Speed'}[a.def.arch] || 'Velocity') },
+  // chain's reach lives in 'range', not 'size' — this is its area upgrade
+  { key:'range',  label:'Chain Reach', v:0.20, pct:true, fits:a=>a.def.arch==='chain' },
 ];
+function upLabel(u,a){ return (u.labelFor ? u.labelFor(a) : u.label); }
 
 /* ----------------------------- ITEMS ------------------------------------ */
 const ITEMS = [
@@ -1547,6 +1612,12 @@ addEventListener('resize', resize);
 
 const keys = {};
 addEventListener('keydown', e=>{
+  // the relic prompt owns the keyboard while it's open
+  if(G && G.itemChoiceOpen){
+    if(e.key==='Enter'){ e.preventDefault(); G.itemChoiceOpen(true);  return; }
+    if(e.key==='Escape'){ e.preventDefault(); G.itemChoiceOpen(false); return; }
+    return;
+  }
   keys[e.key.toLowerCase()] = true;
   if(e.key === ' ' || e.key === 'Shift') e.preventDefault();   // dodge keys, not page actions
   // ULTIMATE on Q — fires once per press, only when ready and in a live run
@@ -1934,7 +2005,8 @@ function tickTyphon(dt){
         h.fireT -= dt;
         if(h.fireT <= 0){ h.fireT = rnd(2.2,3.4);
           const a = Math.atan2(p.y-h.y, p.x-h.x), sp = 260;
-          G.ebullets.push({ x:h.x, y:h.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, r:8, dmg:14, life:4, c:'#B48CE6' });
+          G.ebullets.push({ x:h.x, y:h.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+                             r:8, dmg:14, life:4, c:'#B48CE6', c2:'#E6D2FF', ph:0 });
         }
       } else if(h.kind === 'lunger'){
         h.lungeT -= dt;
@@ -3498,7 +3570,7 @@ function diff(){ return 1 + (CFG.PLAYERS - 1) * CFG.DIFF_PER_PLAYER; }  // [MP]
 
 /* --------------------------- ABILITIES ---------------------------------- */
 function addAbility(def){
-  const a = { def, lv:1, t:0, mods:{dmg:0,cd:0,size:0,dur:0,count:0,pierce:0,speed:0}, orbs:[], phase:SIM()*6.28 };
+  const a = { def, lv:1, t:0, mods:{dmg:0,cd:0,size:0,dur:0,count:0,pierce:0,speed:0,range:0}, orbs:[], phase:SIM()*6.28 };
   G.abilities.push(a);
   if(def.arch==='summon') spawnMinions(a);
   renderAbilBar();
@@ -3515,7 +3587,7 @@ function A(a,k){ // resolved ability stat
     case 'count':  return Math.max(1, Math.round((b.count||1) + a.mods.count));
     case 'pierce': return Math.max(0, Math.round((b.pierce||0) + a.mods.pierce));
     case 'speed':  return (b.speed||0)* (1+a.mods.speed) * S.vel();
-    case 'range':  return (b.range||0)* (1+a.mods.size*.5);
+    case 'range':  return (b.range||0)* (1 + (a.mods.range||0) + a.mods.size*.5);
     case 'len':    return (b.len||0)  * (1+a.mods.size*.5);
     case 'tick':   return (b.tick||.4);
   }
@@ -3653,9 +3725,16 @@ function spawnMinions(a, n=null){
 function hit(e, dmg, c, type){
   let crit = SIM() < G.stats.crit;
   let d = dmg * (crit ? G.stats.critdmg : 1);
+  // Forge's Sunder: stripped scale means every later wound bites deeper
+  if(e.sunder) d *= (1 + e.sunder);
+  // Umbral's Mark: the strike that follows a marking lands harder
+  if(e.marked){ d *= (1 + TRAIT_TUNE.markBonus); e.marked = false; }
   let mark = '';
   if(type && e.resist === type){ d *= RESIST_MULT; mark = 'resist'; }
   else if(type && e.weak === type){ d *= WEAK_MULT; mark = 'weak'; }
+  // the order's signature rides on every art it casts
+  if(G.el && !e.boss) applyTrait(e, d, type);
+  else if(G.el && e.boss) applyTrait(e, d, type, true);
   e.hp -= d;
   e.flash = 0.09;
   // guarded at the PUSH, not the draw — in a 600-enemy swarm this is the single
@@ -3700,6 +3779,61 @@ function hurtPlayer(amount){
     gameOver();
   }
 }
+/* An order's signature effect. Bosses take the damage-shaped parts but shrug
+   off the crowd control, so a boss fight never becomes a stun-lock. */
+function applyTrait(e, d, type, isBoss){
+  const T = TRAIT_TUNE;
+  switch(G.el.id){
+    case 'fire':
+      e.burn = (e.burn||0) + d*T.burnDps;
+      e.burnT = T.burnTime;
+      break;
+    case 'water':
+      if(isBoss) break;
+      e.drag = Math.min(T.slowMax, (e.drag||0) + T.slowStep);
+      e.slowT = Math.max(e.slowT||0, T.slowTime);
+      break;
+    case 'nature':
+      if(isBoss) break;
+      if(SIM() < T.rootChance){ e.stunT = Math.max(e.stunT||0, T.rootTime); }
+      break;
+    case 'rock':
+      if(isBoss) break;
+      knock(e, e.x-G.p.x, e.y-G.p.y, T.shove);
+      break;
+    case 'iron':
+      e.sunder = Math.min(T.sunderMax, (e.sunder||0) + T.sunderStep);
+      break;
+    case 'sky':
+      if(isBoss) break;
+      knock(e, e.x-G.p.x, e.y-G.p.y, T.gust);
+      break;
+    case 'light':
+      if(G.p.hp < G.p.maxhp) G.p.hp = Math.min(G.p.maxhp, G.p.hp + G.p.maxhp*T.mercy);
+      break;
+    case 'shadow':
+      // wounded dragons are finished outright; everything else is marked
+      if(!isBoss && e.hp - d <= e.maxhp*T.execute && e.hp - d > 0){
+        e.hp = 0;
+        G.dmgnums.push({ x:e.x, y:e.y-14, v:'EXECUTE', life:.8, txt:true, c:'#DDBBFF' });
+      } else e.marked = true;
+      break;
+    case 'lightning': {
+      // a portion of the strike leaps onward — never recursively
+      if(e._arcing) break;
+      const near = nearest(e.x, e.y, T.arcRange, e);   // skip the dragon we just hit
+      if(near && near !== e && near.alive){
+        e._arcing = true;
+        G.fx.push({ type:'arc', x1:e.x, y1:e.y, x2:near.x, y2:near.y, life:.14, max:.14,
+                    c:G.el.c, c2:G.el.c2 });
+        hit(near, d*T.arcShare, G.el.c2, type);
+        e._arcing = false;
+      }
+      break;
+    }
+  }
+}
+
 function kill(e){
   e.alive = false;
   // Typhon head — its own death handling (drops, respawn from pool)
@@ -4028,9 +4162,20 @@ function update(dt){
       e.x = p.x+Math.cos(a)*dist; e.y = p.y+Math.sin(a)*dist;
     }
 
-    if(e.slowT > 0) e.slowT -= dt;
+    if(e.slowT > 0) e.slowT -= dt; else e.drag = 0;
     if(e.stunT > 0) e.stunT -= dt;
-    let mvx = dx/d, mvy = dy/d, spd = e.sp * (e.slowT > 0 ? 0.5 : 1) * (e.stunT > 0 ? 0 : 1);
+    // Ember's Kindle: the wound keeps burning after the art has moved on
+    if(e.burnT > 0){
+      e.burnT -= dt;
+      e.hp -= e.burn * dt;
+      if(SETTINGS.dmgnums && SIM() < dt*3)
+        G.dmgnums.push({ x:e.x+frnd(-5,5), y:e.y-6, v:Math.round(e.burn), life:.5, c:'#FFB067' });
+      if(e.hp <= 0){ kill(e); continue; }
+    }
+    // Tide's Undertow deepens with every hit, on top of any ordinary slow
+    const dragMul = 1 - (e.drag||0);
+    let mvx = dx/d, mvy = dy/d,
+        spd = e.sp * (e.slowT > 0 ? 0.5 : 1) * (e.stunT > 0 ? 0 : 1) * dragMul;
 
     // --- SALAMANDER: hold a firing lane, spit into it ---
     if(e.ranged){
@@ -4267,7 +4412,11 @@ function update(dt){
     if(d < mag*0.75){ it.x += (dx/d)*300*dt; it.y += (dy/d)*300*dt; }
     if(d < p.r+11){
       it.dead = true;
-      takeItem(it.def, it.rar);        // auto-pickup + diminishing-returns stack, never interrupts
+      // Solo: stop and choose, so a golden shard is never wasted on something
+      // you didn't want. Co-op keeps auto-pickup — one player's menu must not
+      // freeze the hunt for everyone else.
+      if(typeof MP!=='undefined' && MP.on) takeItem(it.def, it.rar);
+      else openItemChoice(it.def, it.rar);
     }
   }
   G.drops = G.drops.filter(i=>!i.dead);
@@ -4422,6 +4571,49 @@ function stackContribution(copyNum, sameRarity){
   if(sameRarity && copyNum > 1) m *= 0.75;   // same-rarity dupe: reduced further
   return m;
 }
+/* A relic on the ground now stops the hunt and asks. You can take it, or leave
+   it — and the card shows exactly what it would do to a stack you already hold,
+   including the warning when a sixth copy would start working against you. */
+function openItemChoice(def, rar){
+  const held = G.itemSlots[def.id];
+  const stacks = held ? held.stacks : 0;
+  const next = stacks + 1;
+  const mult = stackContribution(next, held && held.lastRar && held.lastRar.id === rar.id);
+  const amt = def.v * rar.m * mult;
+  const bad = mult < 0;
+  const shown = def.pct ? `${amt>=0?'+':''}${(amt*100).toFixed(1)}%` : `${amt>=0?'+':''}${amt.toFixed(1)}`;
+
+  G.paused = true; clearKeys();
+  const box = document.getElementById('itemchoice');
+  box.innerHTML = `
+    <div class="ic-wrap">
+      <div class="ic-h">A Relic Lies Here</div>
+      <div class="ic-card" style="border-color:${rar.c}66">
+        <div class="ic-icon">${iconImg(def.id, rar.c, 46)}</div>
+        <div class="ic-rar" style="color:${rar.c}">${rar.name}</div>
+        <div class="ic-nm">${def.name}</div>
+        <div class="ic-ds">${STAT_LABEL[def.stat]||def.stat}${stacks?` · you carry ${stacks}`:''}</div>
+        <div class="ic-fx" style="color:${bad?'#C0503A':rar.c}">${shown} ${STAT_LABEL[def.stat]||def.stat}</div>
+        ${bad?'<div class="ic-warn">a sixth copy works against you</div>':''}
+      </div>
+      <div class="ic-btns">
+        <button class="btn" id="ic-take">Take it</button>
+        <button class="btn btn--ghost" id="ic-leave">Leave it</button>
+      </div>
+      <div class="ic-hint">Enter to take · Esc to leave</div>
+    </div>`;
+  box.classList.remove('hidden');
+  const done = (take)=>{
+    box.classList.add('hidden');
+    G.itemChoiceOpen = null;
+    if(take) takeItem(def, rar);
+    if(G.pendingLevels > 0) openLevelUp(); else { G.paused = false; syncHUD(); }
+  };
+  G.itemChoiceOpen = done;
+  document.getElementById('ic-take').onclick  = ()=> done(true);
+  document.getElementById('ic-leave').onclick = ()=> done(false);
+}
+
 function takeItem(def, rar){
   const held = G.itemSlots[def.id];
   if(!held){
@@ -4713,11 +4905,15 @@ function draftOptions(){
   // budget spent — nothing left to upgrade
   if(budgetLeft() <= 0) return [];
   // PHASE 2 — five locked in: randomized-strength upgrades to what you have
+  // build every legal art+upgrade pairing, then draw distinct ones — the old
+  // version rolled independently and could show you the same card twice
+  const pairs = [];
+  for(const a of G.abilities)
+    for(const u of UPGRADES)
+      if(u.fits(a)) pairs.push({ a, u });
   const out = [];
-  for(let i=0;i<CFG.DRAFT_CHOICES;i++){
-    const a = pick(G.abilities);
-    const kinds = UPGRADES.filter(u => u.fits(a));
-    const u = pick(kinds);
+  for(let i=0;i<CFG.DRAFT_CHOICES && pairs.length;i++){
+    const { a, u } = pairs.splice(rint(0, pairs.length-1), 1)[0];
     const rar = rollRarity(G.t/60);
     const amt = u.pct ? u.v * rar.m : Math.max(1, Math.round(u.v * rar.m));
     out.push({ kind:'upgrade', a, u, rar, amt });
@@ -4765,7 +4961,7 @@ function openLevelUp(){
       b.onmouseleave = ()=>{ b.style.boxShadow = 'none'; b.style.borderColor = c+'55'; };
       b.onclick = ()=>{ addAbility(o.def); closeLevelUp(); };
     } else {
-      const txt = o.u.pct ? `+${Math.round(o.amt*100)}% ${o.u.label}` : `+${o.amt} ${o.u.label}`;
+      const txt = o.u.pct ? `+${Math.round(o.amt*100)}% ${upLabel(o.u,o.a)}` : `+${o.amt} ${upLabel(o.u,o.a)}`;
       b.style.borderColor = o.rar.c + '55';
       b.innerHTML = `
         <div class="icon">${abilityIcon(o.a.def.arch, o.rar.c, o.rar.c, 44)}</div>
@@ -5302,10 +5498,16 @@ function render(){
   // salamander spit
   ctx.globalCompositeOperation = 'lighter';
   for(const b of G.ebullets){
-    const g = ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,b.r*2);
-    g.addColorStop(0,b.c2); g.addColorStop(.5,b.c); g.addColorStop(1,b.c+'00');
+    // defensive: a projectile missing ph/c2 used to produce a NaN radius and
+    // take the whole game down. Never trust the fields to be complete.
+    const br = Number.isFinite(b.r) ? b.r : 6;
+    const bp = Number.isFinite(b.ph) ? b.ph : 0;
+    const c1 = b.c || '#FFAA66', c2 = b.c2 || c1;
+    const rad = Math.max(1, br*2 + Math.sin(bp)*1.5);
+    const g = ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,Math.max(1,br*2));
+    g.addColorStop(0,c2); g.addColorStop(.5,c1); g.addColorStop(1,c1+'00');
     ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(b.x, b.y, b.r*2 + Math.sin(b.ph)*1.5, 0, 6.2832); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x, b.y, rad, 0, 6.2832); ctx.fill();
   }
   ctx.globalCompositeOperation = 'source-over';
 
@@ -5843,6 +6045,38 @@ let last = 0, hudAcc = 0;
    Rendering still runs as fast as the display allows; only the SIM is locked. */
 const STEP = 1/60;
 let acc = 0;
+/* If the game ever throws mid-run it used to freeze with no explanation, and
+   all a player could report was "it crashed". Now the error is caught, shown
+   on screen with the exact place it happened, and the run keeps its score. */
+function reportCrash(err, where){
+  try{
+    let el = document.getElementById('crashbox');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'crashbox';
+      el.style.cssText='position:fixed;left:12px;right:12px;bottom:12px;z-index:999;'+
+        'background:rgba(30,6,6,.96);border:1px solid #C0503A;color:#FFD3C8;'+
+        'font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.72rem;'+
+        'padding:1rem;line-height:1.6;max-height:40vh;overflow:auto';
+      document.body.appendChild(el);
+    }
+    const st = (err && err.stack ? err.stack.split('\n').slice(0,4).join('\n') : String(err));
+    el.innerHTML = '<b style="color:#E0663D">The hunt hit an error — please send this to the developer</b><br>'+
+      '<b>where:</b> '+where+'<br>'+
+      '<b>t:</b> '+(G?G.t.toFixed(1)+'s':'?')+
+      '  <b>lv:</b> '+(G?G.lv:'?')+
+      '  <b>kills:</b> '+(G?G.kills:'?')+
+      '  <b>order:</b> '+(G&&G.el?G.el.name:'?')+
+      '  <b>seed:</b> '+(G?G.seed:'?')+'<br>'+
+      '<b>enemies:</b> '+(G?G.enemies.length:'?')+
+      '  <b>boss:</b> '+(G&&G.boss?G.boss.key:'none')+
+      '  <b>typhon:</b> '+(G&&G.typhon?('yes, '+G.typhon.killed+' heads'):'no')+
+      '  <b>cage:</b> '+(G&&G.cage?'yes':'no')+
+      '  <b>arena:</b> '+(G&&G.arena?'yes':'no')+'<br>'+
+      '<pre style="white-space:pre-wrap;margin-top:.5rem;color:#F0B0A0">'+st+'</pre>';
+    console.error(where, err);
+  }catch(e){ console.error('crash reporter failed', e); }
+}
 function loop(ts){
   requestAnimationFrame(loop);
   let frame = (ts - last)/1000 || 0;
@@ -5853,13 +6087,15 @@ function loop(ts){
     acc += Math.min(frame, 0.25);      // cap: a tabbed-out window must not
     let steps = 0;                     // try to catch up on 30 seconds at once
     while(acc >= STEP && steps < 5){
-      update(STEP);
+      try{ update(STEP); }
+      catch(err){ reportCrash(err,'update'); G.running=false; gameOver(false); return; }
       if(!G || !G.running) return;
       acc -= STEP; steps++; G.tick++;
     }
     if(steps === 5) acc = 0;           // spiral-of-death guard: drop the debt
   }
-  render();
+  try{ render(); }
+  catch(err){ reportCrash(err,'render'); G.running=false; gameOver(false); return; }
   hudAcc += frame;
   if(hudAcc > 0.1){ hudAcc = 0; syncHUD(); }
 }
@@ -6449,6 +6685,15 @@ function renderCodex(){
           <span>Speed<b>${el.speed}</b></span>
           <span>Armour<b>${Math.round(el.armor*100)}%</b></span>
           <span>Regen<b>${el.regen.toFixed(1)}/s</b></span>
+        </div>
+        <div class="cx-rule"></div>
+        <div class="cx-ult" style="border-color:${el.c}66">
+          <div class="cx-ult-key" style="font-size:.55rem;letter-spacing:.1em">SIGN</div>
+          <div>
+            <div class="cx-ult-tag" style="color:${el.c}">Order Signature — carried by every art</div>
+            <div class="cx-ult-nm" style="color:${el.c2}">${ORDER_TRAIT[el.id].name}</div>
+            <div class="cx-ult-ds">${ORDER_TRAIT[el.id].desc}</div>
+          </div>
         </div>
         <div class="cx-rule"></div>
         <div class="cx-ult" style="border-color:${el.c}66">
