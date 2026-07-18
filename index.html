@@ -94,6 +94,9 @@
   .mi:hover::before,.mi:hover::after,
   .mi:focus-visible::before,.mi:focus-visible::after{opacity:1;transform:translateY(-50%) scale(1)}
   .mi--primary{color:var(--gold);font-size:.95rem}
+  .mi--coop{color:#8FB0FF}
+  .mi--coop::after{content:'·  2–6 players';font-family:var(--mono);font-size:.5rem;letter-spacing:.16em;
+    color:var(--bone);margin-left:.6rem;vertical-align:middle}
   .mi--quit{color:rgba(155,147,126,.5);font-size:.72rem;margin-top:.9rem}
 
   .btn--ghost{border-color:rgba(232,220,192,.28);color:var(--bone)}
@@ -495,6 +498,7 @@
     <p class="lede">Nine orders. Nine disciplines apiece. You will master <em>five</em> — no more — and the swarm will decide whether you chose well.</p>
     <nav class="menu">
       <button class="mi mi--primary" id="btn-begin">Choose your Order</button>
+      <button class="mi mi--coop" id="btn-coop">Hunt with Friends</button>
       <button class="mi" id="btn-codexhub">Codex &amp; Relics</button>
       <button class="mi" id="btn-scores">Scoreboard</button>
       <button class="mi" id="btn-settings">Settings</button>
@@ -6213,6 +6217,10 @@ function renderSettings(){
 }
 
 /* ========================== MENU WIRING ================================= */
+/* Co-op lives in its own file (host-authoritative peer-to-peer multiplayer).
+   Upload it alongside this one; change COOP_FILE if you name it differently. */
+const COOP_FILE = 'coop.html';
+document.getElementById('btn-coop').onclick = ()=>{ location.href = COOP_FILE; };
 document.getElementById('btn-codexhub').onclick = ()=> show('screen-codexhub');
 document.getElementById('btn-hub-back').onclick  = ()=> show('screen-title');
 document.getElementById('btn-hub-chars').onclick = ()=>{
