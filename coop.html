@@ -124,7 +124,7 @@
 <div id="app">
   <div class="lobby" id="lobby">
     <h1>Dragon Slayers</h1>
-    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 6</span></div>
+    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 8</span></div>
 
     <div class="panel" id="panel-name">
       <h2>Your name</h2>
@@ -205,25 +205,564 @@ const PLAYER_COLORS = ['#C9A227','#5FBF6F','#B48CE6','#E0663D','#3FA9A0','#FF8C3
    tuned so the roles feel different without needing all 81 arts. ---- */
 const ORDERS = {
   ember:  { name:'Ember',  role:'Ravager',    c:'#FF6B2C', c2:'#FFC46B', hp:105, dmg:1.18, speed:172,
-            art:'bolt',  artName:'Cinderbolt', desc:'a piercing bolt of fire' },
+            sex:'m', art:'bolt',  artName:'Cinderbolt', desc:'a piercing bolt of fire' },
   tide:   { name:'Tide',   role:'Warden',     c:'#2FA8E0', c2:'#9EE6FF', hp:150, dmg:0.80, speed:152,
-            art:'aura',  artName:'Undertow',   desc:'a drowning aura around you' },
+            sex:'f', art:'aura',  artName:'Undertow',   desc:'a drowning aura around you' },
   thorn:  { name:'Thorn',  role:'Warden',     c:'#4FBF5F', c2:'#B9F5A0', hp:140, dmg:0.85, speed:156,
-            art:'zone',  artName:'Bramble',    desc:'thorns that erupt from the ground' },
+            sex:'f', art:'zone',  artName:'Bramble',    desc:'thorns that erupt from the ground' },
   stone:  { name:'Stone',  role:'Warden',     c:'#A98262', c2:'#E0C39C', hp:160, dmg:0.78, speed:148,
-            art:'nova',  artName:'Tremor',     desc:'a shockwave burst' },
+            sex:'m', art:'nova',  artName:'Tremor',     desc:'a shockwave burst' },
   forge:  { name:'Forge',  role:'Ravager',    c:'#A9B3BE', c2:'#E6EEF5', hp:110, dmg:1.15, speed:168,
-            art:'bolt',  artName:'Ironshot',   desc:'a heavy iron spike' },
+            sex:'m', art:'bolt',  artName:'Ironshot',   desc:'a heavy iron spike' },
   gale:   { name:'Gale',   role:'Skirmisher', c:'#7FD8D0', c2:'#D6FFFB', hp:88,  dmg:1.00, speed:198,
-            art:'orbit', artName:'Windring',   desc:'blades that circle you' },
+            sex:'m', art:'orbit', artName:'Windring',   desc:'blades that circle you' },
   dawn:   { name:'Dawn',   role:'Skirmisher', c:'#FFD860', c2:'#FFF6D0', hp:96,  dmg:0.92, speed:180,
-            art:'nova',  artName:'Sunburst',   desc:'a burst of holy light' },
+            sex:'m', art:'nova',  artName:'Sunburst',   desc:'a burst of holy light' },
   umbral: { name:'Umbral', role:'Skirmisher', c:'#9B6BD6', c2:'#DDBBFF', hp:86,  dmg:1.10, speed:190,
-            art:'bolt',  artName:'Nightfang',  desc:'a fang of shadow' },
+            sex:'f', art:'bolt',  artName:'Nightfang',  desc:'a fang of shadow' },
   storm:  { name:'Storm',  role:'Ravager',    c:'#F2E14C', c2:'#FFFBB0', hp:92,  dmg:1.22, speed:186,
-            art:'chain', artName:'Arcjump',    desc:'lightning that leaps between foes' },
+            sex:'m', art:'chain', artName:'Arcjump',    desc:'lightning that leaps between foes' },
 };
+/* BIOMES — same palettes as single-player. The current biome is derived from
+   the synced game clock, so every client computes the same one without any
+   extra network traffic. Ground textures load from art/<tex>.webp exactly as
+   they do in the single-player game. */
+const BIOMES=[
+  { id:'volcanic', name:'Volcanic Wastes', bg:'#170B08', grid:'rgba(255,120,60,.05)',  tex:'volcanic-wastes', tint:'#3A1D12' },
+  { id:'storm',    name:'Storm Peaks',     bg:'#0A0E1B', grid:'rgba(140,190,255,.055)',tex:'storm-peaks',     tint:'#1B2438' },
+  { id:'coast',    name:'Sunken Coast',    bg:'#07151A', grid:'rgba(90,220,220,.05)',  tex:'sunken-coast',    tint:'#123038' },
+  { id:'jungle',   name:'Deep Jungle',     bg:'#0A1510', grid:'rgba(110,220,130,.05)', tex:'deep-jungle',     tint:'#12301B' },
+  { id:'caverns',  name:'Cavern Depths',   bg:'#0F0A13', grid:'rgba(185,145,225,.05)', tex:'cavern-depths',   tint:'#241832' },
+  { id:'marsh',    name:'Twilight Marsh',  bg:'#0C0910', grid:'rgba(165,145,205,.05)', tex:'twilight-marsh',  tint:'#1E1A2E' },
+];
+const BIOME_EVERY=100;                       // seconds per biome
+function biome(){ return BIOMES[Math.floor(G.t/BIOME_EVERY)%BIOMES.length]; }
+
+// lazily-loaded ground textures, identical convention to single-player
+const _texCache={};
+function groundTexture(texId){
+  if(!texId) return null;
+  let e=_texCache[texId];
+  if(!e){
+    e=_texCache[texId]={img:new Image(),ready:false};
+    e.img.onload=()=>{e.ready=true;};
+    e.img.onerror=()=>{e.failed=true;};
+    e.img.src='art/'+texId+'.webp';
+  }
+  return e.ready?e:null;
+}
+
+/* WYRMHOARD RELICS — buried across the world.
+   OWNERSHIP: whoever reaches one first claims it, and that spot is spent for
+   everyone. No duplication, no party farming the same relic; a relic you find
+   is genuinely yours, and the race to reach it is part of playing together. */
+const RELICS={
+  embercrown:{ name:'The Ember Crown', c:'#FF6B2C', boon:'+25% damage',        apply:p=>p.up.dmg+=2 },
+  tidepearl: { name:'The Tide Pearl',  c:'#2FA8E0', boon:'+2.5 health regen',  apply:p=>p.regen=(p.regen||0)+2.5 },
+  thornheart:{ name:'The Thornheart',  c:'#4FBF5F', boon:'+40 max health',     apply:p=>{p.maxhp+=40;p.hp=Math.min(p.maxhp,p.hp+40);} },
+  stormeye:  { name:"The Storm's Eye", c:'#F2E14C', boon:'+50% cast speed',    apply:p=>p.up.cd+=5 },
+  ironscale: { name:'The Iron Scale',  c:'#A9B3BE', boon:'+15% armour',        apply:p=>p.armor=(p.armor||0)+0.15 },
+  shadowfang:{ name:'The Shadow Fang', c:'#9B6BD6', boon:'+35% damage',        apply:p=>p.up.dmg+=3 },
+  sunhymn:   { name:'The Sun Hymn',    c:'#FFD860', boon:'+30% reach',         apply:p=>p.up.area+=2 },
+  wyrmcrown: { name:'The Wyrmcrown',   c:'#E8C86A', boon:'the greatest hoard', apply:p=>{p.up.dmg+=2;p.up.cd+=1;p.maxhp+=20;p.hp+=20;} },
+};
+const RELIC_KEYS=Object.keys(RELICS);
+const RELIC_R=34;
+function seedRelics(){
+  // deterministic, like the shrines, so everyone sees the same buried hoard
+  const r=mulberry32(Net.seed^0x5EED1);
+  G.relics=[];
+  for(let i=0;i<12;i++){
+    const a=r()*6.2832, dist=700+r()*3000;
+    G.relics.push({ id:i, kind:RELIC_KEYS[(r()*RELIC_KEYS.length)|0],
+      x:Math.cos(a)*dist, y:Math.sin(a)*dist, taken:false, by:null });
+  }
+}
+// host only: first living slayer to touch a relic claims it outright
+function tickRelics(){
+  if(!Net.isHost) return;
+  for(const rel of G.relics){
+    if(rel.taken) continue;
+    for(const p of Net.players.values()){
+      if(!p.alive) continue;
+      if(Math.hypot(p.x-rel.x,p.y-rel.y)<RELIC_R+WORLD.PLAYER_R){
+        rel.taken=true; rel.by=p.id;
+        const R=RELICS[rel.kind];
+        if(R&&R.apply) R.apply(p);
+        hostEvent({t:'ev',k:'relic',rid:rel.id,kind:rel.kind,who:p.id,name:p.name});
+        break;
+      }
+    }
+  }
+}
+
 const ORDER_KEYS = Object.keys(ORDERS);
+
+/* ====================================================================
+   SPRITES — ported verbatim from the single-player game so co-op looks
+   like the same game. Sprite art has nothing to do with networking; the
+   maps, palettes and painter below are identical to single-player.
+   ==================================================================== */
+const SPRITE = {
+  // shared palette keys resolved per-creature at draw time:
+  //   D dark   B body   L light/belly   H highlight/horn   K eye ink   W white(flash)
+  // frame A / frame B differ only where motion lives (wings, coils).
+
+  drake: { w:16, h:16, cell:2.0, frames:[[
+    "................",
+    "................",
+    ".......HH.......",
+    "......HBBH......",
+    ".....DBBBBD.....",
+    "....DBBBBBBD....",
+    "...DBBLLLLBBD...",
+    "...DBLLLLLLBD...",
+    "...DBBLLLLBBD...",
+    "....BB KK BB....",
+    "....DB....BD....",
+    ".....D....D.....",
+    "................",
+    "................",
+    "................",
+    "................",
+  ],[
+    "................",
+    ".......HH.......",
+    "......HBBH......",
+    "......DBBD......",
+    ".....DBBBBD.....",
+    "....DBBBBBBD....",
+    "...DBBLLLLBBD...",
+    "...DBLLLLLLBD...",
+    "...DBBLLLLBBD...",
+    "....BB KK BB....",
+    ".....DBBBBD.....",
+    "....D......D....",
+    "................",
+    "................",
+    "................",
+    "................",
+  ]]},
+
+  // WYVERN — the flap is the whole read. Big wings, up on frame A, down on B.
+  wyvern: { w:16, h:16, cell:2.2, fly:true, frames:[[
+    "................",
+    "DD............DD",
+    ".DDD........DDD.",
+    "..DBD......DBD..",
+    "...DBB.HH.BBD...",
+    "....DBBBBBBBD...",
+    ".....BBLLLBB....",
+    ".....BLLLLLB....",
+    "....DBBLLLBBD...",
+    ".....BB..BB.....",
+    "......BKKB......",
+    ".......BB.......",
+    "......D..D......",
+    "................",
+    "................",
+    "................",
+  ],[
+    "................",
+    "................",
+    "..D........D....",
+    "..DBD.HH..DBD...",
+    "...DBBBBBBBBD...",
+    "....BBBBBBBB....",
+    "..DDBBLLLBB DD..",
+    ".DD.BLLLLLB..DD.",
+    "D...BBLLLBB...D.",
+    ".....BB..BB.....",
+    "......BKKB......",
+    ".......BB.......",
+    "......D..D......",
+    "................",
+    "................",
+    "................",
+  ]]},
+
+  // SALAMANDER — low, long, a tail-flick between frames. Charge glow is drawn separately.
+  salamander: { w:16, h:16, cell:2.2, frames:[[
+    "................",
+    "................",
+    "............HH..",
+    "...........HBBH.",
+    "....DDDD...DBBD.",
+    "..DDBBBBDD.DBB..",
+    ".DBBLLLLBBDBB...",
+    ".DBLLLLLLBBB KK.",
+    ".DBBLLLLBBBB....",
+    "..DDBBBBDDD.....",
+    "....DDDD........",
+    "...D....D.......",
+    "................",
+    "................",
+    "................",
+    "................",
+  ],[
+    "................",
+    "................",
+    "............HH..",
+    "...........HBBH.",
+    "...DDDD....DBBD.",
+    ".DDBBBBDD..DBB..",
+    "DBBLLLLBBD BB...",
+    "DBLLLLLLBBBB KK.",
+    "DBBLLLLBBBB.....",
+    ".DDBBBBDDD......",
+    "...DDDD.........",
+    "..D....D........",
+    "................",
+    "................",
+    "................",
+    "................",
+  ]]},
+
+  // HYDRA — three heads that sway. The heads ARE the threat read.
+  hydra: { w:16, h:16, cell:2.4, frames:[[
+    "..H....H....H...",
+    ".HBH..HBH..HBH..",
+    ".HBH..HBH..HBH..",
+    ".BKB..BKB..BKB..",
+    "..BB..BBB..BB...",
+    "...DB.BBB.BD....",
+    "....DBBBBBD.....",
+    "...DBBLLLBBD....",
+    "..DBBLLLLLBBD...",
+    "..DBLLLLLLLBD...",
+    "..DBBLLLLLBBD...",
+    "...DBBBBBBBD....",
+    "....DDBBBDD.....",
+    "................",
+    "................",
+    "................",
+  ],[
+    "H......H......H.",
+    "HBH...HBH...HBH.",
+    ".HBH..HBH..HBH..",
+    ".BKB..BKB..BKB..",
+    "..BB..BBB..BB...",
+    "...DB.BBB.BD....",
+    "....DBBBBBD.....",
+    "...DBBLLLBBD....",
+    "..DBBLLLLLBBD...",
+    "..DBLLLLLLLBD...",
+    "..DBBLLLLLBBD...",
+    "...DBBBBBBBD....",
+    "....DDBBBDD.....",
+    "................",
+    "................",
+    "................",
+  ]]},
+
+  // SERPENT HEAD — the body segments are drawn by the existing coil system;
+  // this is only the crowned head.
+  serpent: { w:16, h:16, cell:2.4, frames:[[
+    "................",
+    "....HH....HH....",
+    "...HBBH..HBBH...",
+    "....DBBBBBBD....",
+    "...DBBBBBBBBD...",
+    "..DBBLLLLLLBBD..",
+    "..DBLLLLLLLLBD..",
+    "..DBLKKLLKKLBD..",
+    "..DBLLLLLLLLBD..",
+    "..DBBLLLLLLBBD..",
+    "...DBBLLLLBBD...",
+    "....DBBBBBBD....",
+    ".....DBBBBD.....",
+    "......DDDD......",
+    "................",
+    "................",
+  ],[
+    "................",
+    "...HH......HH...",
+    "..HBBH....HBBH..",
+    "...DBBBBBBBBD...",
+    "..DBBBBBBBBBBD..",
+    "..DBBLLLLLLBBD..",
+    "..DBLLLLLLLLBD..",
+    "..DBLKKLLKKLBD..",
+    "..DBLLLLLLLLBD..",
+    "..DBBLLLLLLBBD..",
+    "...DBBLLLLBBD...",
+    "....DBBBBBBD....",
+    ".....DBBBBD.....",
+    "......DDDD......",
+    "................",
+    "................",
+  ]]},
+};
+
+/* ---- BOSSES: 32x32. Bigger canvas = real silhouette + one mechanic tell each.
+   Same palette letters (D B L H K W), plus per-boss accents baked as literal
+   chars mapped in bossPalette(). These are the things the player stares at. */
+
+function shade(hex, f){
+  const n = parseInt(hex.slice(1),16);
+  const r = Math.round(((n>>16)&255)*f), g = Math.round(((n>>8)&255)*f), b = Math.round((n&255)*f);
+  return `rgb(${r},${g},${b})`;
+}
+
+function spritePalette(e){
+  return { D:shade(e.c,0.55), B:e.c, L:e.c2, H:e.c2, K:'#160b1f', W:'#ffffff' };
+}
+
+function drawSprite(def, frameIdx, cx, cy, pal, scale, flash){
+  const rows = def.frames[frameIdx % def.frames.length];
+  const cell = def.cell * scale;
+  const ox = cx - (def.w * cell)/2;
+  const oy = cy - (def.h * cell)/2;
+  for(let y=0;y<def.h;y++){
+    const line = rows[y];
+    for(let x=0;x<def.w;x++){
+      const ch = line[x];
+      if(ch === '.' || ch === ' ' || ch === undefined) continue;
+      ctx.fillStyle = flash ? '#ffffff' : (pal[ch] || pal.B);
+      // +0.5 overdraw kills hairline seams between cells on fractional scales
+      ctx.fillRect((ox + x*cell)|0, (oy + y*cell)|0, Math.ceil(cell)+0.5, Math.ceil(cell)+0.5);
+    }
+  }
+}
+
+const PLAYER_SPRITE = {
+  Ravager: { w:16, h:16, cell:1.7, frames:[[
+    "......KKKK......",
+    ".....KHHHHK.....",
+    ".....KHHHHK...S.",
+    "......KHHK...SS.",
+    ".....DBBBBD..S..",
+    "....DBLBBLBD.S..",
+    "....DBBBBBBDDS..",
+    "....DBBBBBB.S...",
+    "....DBBBBBBDS...",
+    ".....BBBBBB.S...",
+    ".....DBBBBD.....",
+    "......BB BB.....",
+    ".....DBD.DBD....",
+    ".....DD...DD....",
+    "................",
+    "................",
+  ],[
+    "......KKKK......",
+    ".....KHHHHK.....",
+    ".....KHHHHK...S.",
+    "......KHHK...SS.",
+    ".....DBBBBD..S..",
+    "....DBLBBLBD.S..",
+    "....DBBBBBBDDS..",
+    "....DBBBBBB.S...",
+    "....DBBBBBBDS...",
+    ".....BBBBBB.S...",
+    ".....DBBBBD.....",
+    "......BBBB......",
+    ".....DBD.DBD....",
+    "......DD.DD.....",
+    ".....DD...DD....",
+    "................",
+  ]]},
+  Skirmisher: { w:16, h:16, cell:1.7, frames:[[
+    ".......KKK......",
+    "......KHHHK.....",
+    "......KHHHK..S..",
+    ".......KHK..SS..",
+    "......DBBBD.S...",
+    ".....DLBBLD.S...",
+    ".....DBBBBDDS...",
+    ".....DBBBBBS....",
+    "......BBBBDS....",
+    "......BBBB.S....",
+    "......DBBD......",
+    "......BB.BB.....",
+    ".....DBD.DBD....",
+    ".....DD...DD....",
+    "................",
+    "................",
+  ],[
+    ".......KKK......",
+    "......KHHHK.....",
+    "......KHHHK..S..",
+    ".......KHK..SS..",
+    "......DBBBD.S...",
+    ".....DLBBLD.S...",
+    ".....DBBBBDDS...",
+    ".....DBBBBBS....",
+    "......BBBBDS....",
+    "......BBBB.S....",
+    "......DBBD......",
+    ".....BB..BB.....",
+    "....DBD...DBD...",
+    "....DD.....DD...",
+    "................",
+    "................",
+  ]]},
+  Warden: { w:16, h:16, cell:1.75, frames:[[
+    "......KKKK......",
+    ".....KHHHHK.....",
+    ".....KHHHHK..S..",
+    "......KHHK...SS.",
+    "....DDBBBBDD.S..",
+    "...DBLBBBBLBD S.",
+    "...DBBBBBBBBDDS.",
+    "...DBBBBBBBB.S..",
+    "...DBBBBBBBBDS..",
+    "...DBBBBBBBB.S..",
+    "....DBBBBBBD....",
+    "....DBB..BBD....",
+    "...DBBD..DBBD...",
+    "...DDD....DDD...",
+    "................",
+    "................",
+  ],[
+    "......KKKK......",
+    ".....KHHHHK.....",
+    ".....KHHHHK..S..",
+    "......KHHK...SS.",
+    "....DDBBBBDD.S..",
+    "...DBLBBBBLBD S.",
+    "...DBBBBBBBBDDS.",
+    "...DBBBBBBBB.S..",
+    "...DBBBBBBBBDS..",
+    "...DBBBBBBBB.S..",
+    "....DBBBBBBD....",
+    "...DBBB..BBBD...",
+    "..DBBD....DBBD..",
+    "..DDD......DDD..",
+    "................",
+    "................",
+  ]]},
+};
+
+function playerPalette(el){
+  return {
+    D: shade(el.c, 0.45),   // outline
+    B: el.c,                // robe = element primary
+    L: el.c2,               // cloak trim = element secondary
+    H: '#E6C9A8',           // skin
+    K: shade(el.c, 0.30),   // hood shadow / hair
+    S: '#E8DCC0',           // spear/steel = bone
+    W: '#ffffff',
+  };
+}
+
+const PLAYER_SPRITE_F = {
+  Ravager: { w:16, h:16, cell:1.7, frames:[[
+    "......KKKK......",
+    ".....KHHHHK.....",
+    "....KHHHHHK..S..",
+    "....KKHHKK...SS.",
+    "....KDBBBDK.S...",
+    "....KBLBBLK.S...",
+    "....DBBBBBDDS...",
+    "....DBBBBBB.S...",
+    "....KBBBBBKS....",
+    ".....BBBBB.S....",
+    ".....DBBBD.....",
+    "......BB BB.....",
+    ".....DBD.DBD....",
+    ".....DD...DD....",
+    "................",
+    "................",
+  ],[
+    "......KKKK......",
+    ".....KHHHHK.....",
+    "....KHHHHHK..S..",
+    "....KKHHKK...SS.",
+    "....KDBBBDK.S...",
+    "....KBLBBLK.S...",
+    "....DBBBBBDDS...",
+    "....DBBBBBB.S...",
+    "....KBBBBBKS....",
+    ".....BBBBB.S....",
+    ".....DBBBD.....",
+    "......BBBB......",
+    ".....DBD.DBD....",
+    "......DD.DD.....",
+    ".....DD...DD....",
+    "................",
+  ]]},
+  Skirmisher: { w:16, h:16, cell:1.7, frames:[[
+    ".......KKK......",
+    "......KHHHK.....",
+    ".....KHHHHK..S..",
+    ".....KKHHKK.SS..",
+    ".....KBBBDK.S...",
+    ".....KLBBLKS....",
+    ".....DBBBBDS....",
+    ".....KBBBBKS....",
+    "......BBBB.S....",
+    "......BBBB......",
+    "......DBBD......",
+    "......BB.BB.....",
+    ".....DBD.DBD....",
+    ".....DD...DD....",
+    "................",
+    "................",
+  ],[
+    ".......KKK......",
+    "......KHHHK.....",
+    ".....KHHHHK..S..",
+    ".....KKHHKK.SS..",
+    ".....KBBBDK.S...",
+    ".....KLBBLKS....",
+    ".....DBBBBDS....",
+    ".....KBBBBKS....",
+    "......BBBB.S....",
+    "......BBBB......",
+    "......DBBD......",
+    ".....BB..BB.....",
+    "....DBD...DBD...",
+    "....DD.....DD...",
+    "................",
+    "................",
+  ]]},
+  Warden: { w:16, h:16, cell:1.75, frames:[[
+    "......KKKK......",
+    ".....KHHHHK.....",
+    "....KHHHHHHK.S..",
+    "....KKHHHKK..SS.",
+    "...KDDBBBBDDKS..",
+    "...KBLBBBBLBKS..",
+    "...DBBBBBBBBDDS.",
+    "...KBBBBBBBBKS..",
+    "...KBBBBBBBBKS..",
+    "...DBBBBBBBBD...",
+    "....DBBBBBBD....",
+    "....DBB..BBD....",
+    "...DBBD..DBBD...",
+    "...DDD....DDD...",
+    "................",
+    "................",
+  ],[
+    "......KKKK......",
+    ".....KHHHHK.....",
+    "....KHHHHHHK.S..",
+    "....KKHHHKK..SS.",
+    "...KDDBBBBDDKS..",
+    "...KBLBBBBLBKS..",
+    "...DBBBBBBBBDDS.",
+    "...KBBBBBBBBKS..",
+    "...KBBBBBBBBKS..",
+    "...DBBBBBBBBD...",
+    "....DBBBBBBD....",
+    "...DBBB..BBBD...",
+    "..DBBD....DBBD..",
+    "..DDD......DDD..",
+    "................",
+    "................",
+  ]]},
+};
+
+// co-op enemy kinds -> single-player sprite maps
+const KIND_SPRITE = { drake:'drake', wyvern:'wyvern', salamander:'salamander', brute:'hydra' };
+// which slayer sprite an order uses — keyed by gender (from the character art)
+// and then by role, exactly as single-player does it
+function coopPlayerSprite(order){
+  const O = ORDERS[order] || ORDERS.ember;
+  const set = (O.sex === 'f') ? PLAYER_SPRITE_F : PLAYER_SPRITE;
+  return set[O.role] || set.Ravager;
+}
+
 
 // ---------- deterministic PRNG ----------
 function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a);
@@ -457,6 +996,7 @@ const G={
   spectateIdx:0, banner:null, over:false,
   teamBuff:0,        // seconds of Charge Shrine damage surge (party-wide)
   allies:[],         // fey dragons summoned by shrines
+  relics:[],         // buried Wyrmhoard relics — first finder keeps them
   draft:null,        // shared level-up: {choices, picked:Set} — pauses everyone
   paused:false,
 };
@@ -483,6 +1023,7 @@ function beginGame(){
   // deterministic from the shared seed, so every client generates the SAME
   // shrines in the same places — the host then owns their charge progress
   seedShrines();
+  seedRelics();
   document.getElementById('app').style.display='none';
   document.getElementById('game').classList.add('on');
   resize(); G.running=true; lastT=performance.now();
@@ -559,7 +1100,9 @@ function update(dt,now){
   // --- interpolate everyone else toward their last reported position ---
   for(const p of Net.players.values()){
     if(p.id===Net.myId) continue;
-    p.x+=(p.tx-p.x)*Math.min(1,dt*12);
+    const dx=p.tx-p.x;
+    if(Math.abs(dx)>1) p.face = dx>0 ? 1 : -1;   // face the way they're moving
+    p.x+=dx*Math.min(1,dt*12);
     p.y+=(p.ty-p.y)*Math.min(1,dt*12);
   }
   // --- camera: follow me, or whoever I'm spectating ---
@@ -573,6 +1116,10 @@ function update(dt,now){
   tickBullets(dt);
   tickFx(dt);
   tickShrines(dt);
+  tickRelics();
+  // relic regen — a slow trickle back for whoever found the Tide Pearl
+  for(const p of Net.players.values())
+    if(p.alive && p.regen) p.hp=Math.min(p.maxhp,p.hp+p.regen*dt);
   if(G.teamBuff>0) G.teamBuff=Math.max(0,G.teamBuff-dt);
   tickAllies(dt);
 
@@ -862,7 +1409,7 @@ function hostApplyDamage(enemyId,dmg,by){
 }
 function hostHurtPlayer(p,amount){
   if(!p.alive) return;
-  p.hp-=amount;
+  p.hp-=amount*(1-Math.min(0.7,p.armor||0));   // armour from relics softens the blow
   // no 'hurt' event: player health already travels in every snapshot, and this
   // fired constantly (26% of all traffic) for information nobody consumed
   if(p.hp<=0){
@@ -936,6 +1483,7 @@ function hostSnapshot(now){
         t:'snap',
         e:near.slice(0,140).map(e=>[e.id,Math.round(e.x),Math.round(e.y),e.kind[0],Math.round(e.hp)]),
         p:players, s:shrines,
+        r:G.relics.filter(r=>r.taken).map(r=>r.id),
         xp:G.xp, lv:G.lv, xn:G.xpNext, gt:Math.round(G.t),
       });
     }catch(err){}
@@ -970,6 +1518,7 @@ function applySnapshot(d){
     if(p){ p.hp=hp; p.alive=!!alive; p.kills=kills; }
   }
   G.xp=d.xp; G.lv=d.lv; G.xpNext=d.xn; G.t=d.gt;
+  for(const rid of (d.r||[])){ const rel=G.relics.find(q=>q.id===rid); if(rel) rel.taken=true; }
   for(const [id,prog,used] of (d.s||[])){
     const s=G.shrines.find(q=>q.id===id);
     if(s){ s.prog=prog/100; s.used=!!used; }
@@ -1011,6 +1560,18 @@ function applyEvent(d){
       }
       closeDraft();
       break;
+    case 'relic': {
+      const rel=G.relics.find(r=>r.id===d.rid);
+      if(rel){ rel.taken=true; rel.by=d.who; }
+      const R=RELICS[d.kind];
+      // apply the boon locally too, so joiners see their own stats change
+      const p=Net.players.get(d.who);
+      if(p && R && R.apply && !Net.isHost) R.apply(p);
+      banner(d.who===Net.myId ? 'YOU CLAIM '+(R?R.name.toUpperCase():'A RELIC')
+                              : d.name+' CLAIMS '+(R?R.name.toUpperCase():'A RELIC'),
+             R?R.boon:'');
+      break;
+    }
     case 'say': banner(d.h,d.s); break;
     case 'buff':
       G.teamBuff=d.dur;
@@ -1205,7 +1766,7 @@ function nearestEnemy(x,y,range,exclude){
 }
 function render(){
   ctx.clearRect(0,0,W,H);
-  ctx.fillStyle='#0B0A0F'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=biome().bg; ctx.fillRect(0,0,W,H);
   const ox=W/2-G.cam.x, oy=H/2-G.cam.y;
   ctx.save(); ctx.translate(ox,oy);
 
@@ -1223,7 +1784,7 @@ function render(){
       ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,6.2832); ctx.stroke();
     }
   }
-  // enemies
+  // enemies — the same pixel dragons as single-player
   const halfW=W/2+70, halfH=H/2+70;
   for(const e of G.enemies){
     if(!e.alive) continue;
@@ -1231,17 +1792,17 @@ function render(){
     // joiners interpolate toward the host's reported position
     if(!Net.isHost && e.tx!==undefined){ e.x+=(e.tx-e.x)*0.28; e.y+=(e.ty-e.y)*0.28; }
     const K=ENEMY_KINDS[e.kind]||ENEMY_KINDS.drake;
+    const def=SPRITE[KIND_SPRITE[e.kind]||'drake'];
     const bob=Math.sin(e.ph)*(e.fly?4:1.5);
-    const y=e.y+bob-(e.fly?10:0);
-    if(e.fly){ ctx.fillStyle='rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(e.x,e.y+6,e.r*.7,e.r*.28,0,0,6.2832); ctx.fill(); }
-    ctx.fillStyle=e.hitT>0?'#fff':K.c;
-    ctx.beginPath(); ctx.arc(e.x,y,e.r,0,6.2832); ctx.fill();
-    ctx.fillStyle=e.hitT>0?'#fff':K.c2;
-    ctx.beginPath(); ctx.arc(e.x,y-e.r*.25,e.r*.5,0,6.2832); ctx.fill();
-    // eyes
-    ctx.fillStyle='#0B0A0F';
-    ctx.beginPath(); ctx.arc(e.x-e.r*.3,y-e.r*.2,1.6,0,6.2832); ctx.fill();
-    ctx.beginPath(); ctx.arc(e.x+e.r*.3,y-e.r*.2,1.6,0,6.2832); ctx.fill();
+    const y=e.y+bob-(e.fly?12:0);
+    // a shadow under flyers reads as "ground magic can't reach this"
+    if(e.fly){
+      ctx.fillStyle='rgba(0,0,0,.32)';
+      ctx.beginPath(); ctx.ellipse(e.x,e.y+6,e.r*.7,e.r*.28,0,0,6.2832); ctx.fill();
+    }
+    const frame=(G.t*(e.fly?9:5)+e.ph|0)&1;
+    const scale=(e.r*2.3)/(def.w*def.cell);
+    drawSprite(def, frame, e.x, y, spritePalette({c:K.c,c2:K.c2}), scale, e.hitT>0);
   }
   // bullets + effects
   for(const b of G.bullets){
@@ -1276,19 +1837,51 @@ function render(){
   ctx.restore();
 }
 function drawGround(){
+  const b=biome();
   const gs=90;
   const x0=Math.floor((G.cam.x-W/2)/gs)*gs, y0=Math.floor((G.cam.y-H/2)/gs)*gs;
-  ctx.strokeStyle='rgba(232,220,192,.045)'; ctx.lineWidth=1;
+
+  // tiled biome texture if the art exists; the bg colour stands in otherwise
+  const tex=groundTexture(b.tex);
+  if(tex){
+    const TILE=256;
+    const sx=Math.floor(x0/TILE)*TILE, sy=Math.floor(y0/TILE)*TILE;
+    ctx.save(); ctx.globalAlpha=.9;
+    for(let x=sx;x<x0+W+TILE;x+=TILE)
+      for(let y=sy;y<y0+H+TILE;y+=TILE) ctx.drawImage(tex.img,x,y,TILE,TILE);
+    ctx.restore();
+    ctx.save(); ctx.globalAlpha=.22; ctx.fillStyle='#000';
+    ctx.fillRect(x0-TILE,y0-TILE,W+TILE*2,H+TILE*2); ctx.restore();
+  }
+
+  // lattice, tinted to the biome
+  ctx.strokeStyle=b.grid; ctx.lineWidth=1;
   ctx.beginPath();
   for(let x=x0;x<x0+W+gs*2;x+=gs){ ctx.moveTo(x,y0); ctx.lineTo(x,y0+H+gs*2); }
   for(let y=y0;y<y0+H+gs*2;y+=gs){ ctx.moveTo(x0,y); ctx.lineTo(x0+W+gs*2,y); }
   ctx.stroke();
-  // deterministic scenery
+
+  // scattered scenery, deterministic so every client sees the same field
+  const dark=shade(b.tint,0.62), acc=shade(b.tint,0.95);
   for(let x=x0-gs;x<x0+W+gs*2;x+=gs) for(let y=y0-gs;y<y0+H+gs*2;y+=gs){
     const h=cellHash(Math.floor(x/gs),Math.floor(y/gs));
-    if((h&0xff)<20){
-      ctx.fillStyle='rgba(120,110,95,.22)';
-      ctx.beginPath(); ctx.ellipse(x+(h>>>8&63),y+(h>>>14&63),9,6,0,0,6.2832); ctx.fill();
+    if((h&0xff)>=44) continue;
+    const px=x+((h>>>8)&63), py=y+((h>>>14)&63);
+    const kind=(h>>>20)&3;
+    ctx.fillStyle=dark;
+    if(kind===0){                       // rock
+      ctx.beginPath(); ctx.ellipse(px,py,10,7,0,0,6.2832); ctx.fill();
+      ctx.fillStyle=acc; ctx.beginPath(); ctx.ellipse(px-2,py-2,5,3,0,0,6.2832); ctx.fill();
+    } else if(kind===1){                // bone
+      ctx.fillRect(px-9,py-1,18,3);
+      ctx.beginPath(); ctx.arc(px-9,py,3,0,6.2832); ctx.fill();
+      ctx.beginPath(); ctx.arc(px+9,py,3,0,6.2832); ctx.fill();
+    } else if(kind===2){                // tuft
+      ctx.fillRect(px-1,py-8,2,9); ctx.fillRect(px-5,py-5,2,6); ctx.fillRect(px+4,py-6,2,7);
+    } else {                            // small skull
+      ctx.beginPath(); ctx.arc(px,py-2,6,0,6.2832); ctx.fill();
+      ctx.fillStyle='#0B0A0F';
+      ctx.fillRect(px-4,py-3,2,2); ctx.fillRect(px+2,py-3,2,2);
     }
   }
 }
@@ -1346,6 +1939,36 @@ function drawShrines(){
       ctx.fillText(T.tip,s.x,s.y-30);
     }
   }
+  // buried relics — a glint worth crossing the map for. Claimed ones vanish.
+  for(const rel of G.relics){
+    if(rel.taken) continue;
+    if(Math.abs(rel.x-G.cam.x)>W/2+120||Math.abs(rel.y-G.cam.y)>H/2+120) continue;
+    const R=RELICS[rel.kind]||RELICS.embercrown;
+    const pulse=.55+.45*Math.sin(G.t*3+rel.id);
+    ctx.save();
+    ctx.globalCompositeOperation='lighter';
+    const g=ctx.createRadialGradient(rel.x,rel.y,0,rel.x,rel.y,42*pulse);
+    g.addColorStop(0,R.c+'AA'); g.addColorStop(1,R.c+'00');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(rel.x,rel.y,42*pulse,0,6.2832); ctx.fill();
+    ctx.globalCompositeOperation='source-over';
+    ctx.restore();
+    // a small hoard: dark plinth with a bright gem riding above it
+    const bob=Math.sin(G.t*2+rel.id)*3;
+    ctx.fillStyle='#2A241E';
+    ctx.beginPath(); ctx.ellipse(rel.x,rel.y+10,14,5,0,0,6.2832); ctx.fill();
+    ctx.fillStyle=shade(R.c,0.5);
+    ctx.beginPath();
+    ctx.moveTo(rel.x,rel.y-12+bob); ctx.lineTo(rel.x+8,rel.y-1+bob);
+    ctx.lineTo(rel.x,rel.y+9+bob);  ctx.lineTo(rel.x-8,rel.y-1+bob);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle=R.c;
+    ctx.beginPath();
+    ctx.moveTo(rel.x,rel.y-12+bob); ctx.lineTo(rel.x+8,rel.y-1+bob);
+    ctx.lineTo(rel.x,rel.y-1+bob); ctx.closePath(); ctx.fill();
+    ctx.font='600 11px Georgia,serif'; ctx.textAlign='center';
+    ctx.fillStyle=R.c+'DD';
+    ctx.fillText(R.name,rel.x,rel.y-24);
+  }
   // fey dragon allies
   for(const a of G.allies){
     if(Math.abs(a.x-G.cam.x)>W/2+80||Math.abs(a.y-G.cam.y)>H/2+80) continue;
@@ -1374,35 +1997,42 @@ function drawPlayer(p){
   if(!p.alive){
     // a fallen slayer: a dim marker so friends can find you
     ctx.globalAlpha=.5;
-    ctx.strokeStyle=p.color; ctx.lineWidth=2;
+    ctx.strokeStyle=O.c; ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(p.x,p.y,WORLD.PLAYER_R,0,6.2832); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(p.x-8,p.y-8); ctx.lineTo(p.x+8,p.y+8);
     ctx.moveTo(p.x+8,p.y-8); ctx.lineTo(p.x-8,p.y+8); ctx.stroke();
     ctx.globalAlpha=1;
     ctx.font='600 11px Georgia,serif'; ctx.textAlign='center';
-    ctx.fillStyle=p.color+'99'; ctx.fillText(p.name+' — fallen',p.x,p.y-26);
+    ctx.fillStyle=O.c+'99'; ctx.fillText(p.name+' — fallen',p.x,p.y-26);
     return;
   }
+  // shadow
   ctx.fillStyle='rgba(0,0,0,.35)';
-  ctx.beginPath(); ctx.ellipse(p.x,p.y+12,12,4,0,0,6.2832); ctx.fill();
-  ctx.fillStyle=O.c;
-  ctx.beginPath(); ctx.arc(p.x,p.y,WORLD.PLAYER_R,0,6.2832); ctx.fill();
-  ctx.fillStyle=O.c2;
-  ctx.beginPath(); ctx.arc(p.x,p.y-4,WORLD.PLAYER_R*.55,0,6.2832); ctx.fill();
-  ctx.strokeStyle=isMe?'#fff':'rgba(0,0,0,.45)'; ctx.lineWidth=isMe?2.5:1.5;
-  ctx.beginPath(); ctx.arc(p.x,p.y,WORLD.PLAYER_R,0,6.2832); ctx.stroke();
-  ctx.fillStyle='#0B0A0F';
-  ctx.beginPath(); ctx.arc(p.x-4,p.y-3,2,0,6.2832); ctx.fill();
-  ctx.beginPath(); ctx.arc(p.x+4,p.y-3,2,0,6.2832); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(p.x,p.y+13,12,4,0,0,6.2832); ctx.fill();
+  // the actual slayer sprite, recoloured to their order
+  const def=coopPlayerSprite(p.order);
+  const moving=Math.abs(p.x-(p._lx||p.x))+Math.abs(p.y-(p._ly||p.y))>0.4;
+  p._lx=p.x; p._ly=p.y;
+  const frame=moving?((G.t*7|0)&1):0;
+  const scale=(WORLD.PLAYER_R*2.4)/(def.w*def.cell);
+  ctx.save();
+  ctx.translate(p.x,0); ctx.scale(p.face>=0?1:-1,1); ctx.translate(-p.x,0);
+  drawSprite(def, frame, p.x, p.y, playerPalette(O), scale, false);
+  ctx.restore();
+  // a ring under YOUR slayer so you never lose yourself in a crowd
+  if(isMe){
+    ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.ellipse(p.x,p.y+13,13,4.5,0,0,6.2832); ctx.stroke();
+  }
   // health pip above hurt players
   if(p.hp<p.maxhp){
     const w=30,k=Math.max(0,p.hp/p.maxhp);
-    ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(p.x-w/2,p.y-WORLD.PLAYER_R-12,w,3);
-    ctx.fillStyle=k>.35?'#5FBF6F':'#C0503A'; ctx.fillRect(p.x-w/2,p.y-WORLD.PLAYER_R-12,w*k,3);
+    ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(p.x-w/2,p.y-WORLD.PLAYER_R-14,w,3);
+    ctx.fillStyle=k>.35?'#5FBF6F':'#C0503A'; ctx.fillRect(p.x-w/2,p.y-WORLD.PLAYER_R-14,w*k,3);
   }
   ctx.font='600 12px Georgia,serif'; ctx.textAlign='center';
-  ctx.fillStyle=isMe?'#fff':p.color;
-  ctx.fillText(p.name+(isMe?' (you)':''),p.x,p.y-WORLD.PLAYER_R-18);
+  ctx.fillStyle=isMe?'#fff':O.c2;
+  ctx.fillText(p.name+(isMe?' (you)':''),p.x,p.y-WORLD.PLAYER_R-20);
 }
 
 // =====================================================================
@@ -1413,7 +2043,8 @@ function updateHUD(){
   const mins=Math.floor(G.t/60), secs=Math.floor(G.t%60);
   const tstr=String(mins).padStart(2,'0')+':'+String(secs).padStart(2,'0');
   document.getElementById('hud').innerHTML=
-    `Room <b>${Net.roomCode}</b><br>Time <b>${tstr}</b><br>Level <b>${G.lv}</b><br>Slain <b>${G.kills}</b>`;
+    `Room <b>${Net.roomCode}</b><br>${biome().name}<br>Time <b>${tstr}</b><br>Level <b>${G.lv}</b><br>Slain <b>${G.kills}</b>`+
+    (G.teamBuff>0?`<br><span style="color:#8FB0FF">CHARGED ${Math.ceil(G.teamBuff)}s</span>`:'');
 
   // roster with health + who's down
   let rows='';
