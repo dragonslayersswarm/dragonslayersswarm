@@ -89,7 +89,7 @@
 <div id="app">
   <div class="lobby" id="lobby">
     <h1>Dragon Slayers</h1>
-    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 2</span></div>
+    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 3</span></div>
 
     <div class="panel" id="panel-name">
       <h2>Your name</h2>
@@ -747,12 +747,13 @@ let lastSnap=0;
 function hostSnapshot(now){
   if(now-lastSnap<1000/WORLD.SNAP_HZ) return;
   lastSnap=now;
-  // only send enemies near ANY player, and round hard to keep packets small
+  // NOTE: the game-time field is 'gt', NOT 't' — 't' is the message type and a
+  // duplicate key here silently overwrote it, so snapshots were discarded.
   sendAll({
     t:'snap',
     e:G.enemies.filter(e=>e.alive).slice(0,180).map(e=>[e.id,Math.round(e.x),Math.round(e.y),e.kind[0],Math.round(e.hp)]),
     p:[...Net.players.values()].map(p=>[p.id,Math.round(p.hp),p.alive?1:0,p.kills||0]),
-    xp:G.xp, lv:G.lv, xn:G.xpNext, t:Math.round(G.t),
+    xp:G.xp, lv:G.lv, xn:G.xpNext, gt:Math.round(G.t),
     s:G.shrines.map(s=>[s.id,Math.round(s.prog*100),s.used?1:0]),
   });
 }
@@ -777,7 +778,7 @@ function applySnapshot(d){
     const p=Net.players.get(id);
     if(p){ p.hp=hp; p.alive=!!alive; p.kills=kills; }
   }
-  G.xp=d.xp; G.lv=d.lv; G.xpNext=d.xn; G.t=d.t;
+  G.xp=d.xp; G.lv=d.lv; G.xpNext=d.xn; G.t=d.gt;
   for(const [id,prog,used] of (d.s||[])){
     const s=G.shrines.find(q=>q.id===id);
     if(s){ s.prog=prog/100; s.used=!!used; }
