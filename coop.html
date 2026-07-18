@@ -64,6 +64,17 @@
     background:rgba(6,5,10,.6);border:1px solid rgba(232,220,192,.14);padding:.5rem .7rem;pointer-events:none;line-height:1.7;min-width:150px}
   #roster .r-row{display:flex;justify-content:space-between;gap:.7rem}
   #roster .r-dead{opacity:.45;text-decoration:line-through}
+  #verbs{position:fixed;bottom:52px;left:16px;font-family:var(--mono);font-size:.55rem;
+    letter-spacing:.18em;color:var(--bone);pointer-events:none;display:flex;flex-direction:column;gap:5px}
+  .vrow{display:flex;align-items:center;gap:7px}
+  .vrow>span:first-child{width:42px}
+  .vtrack{width:74px;height:6px;background:rgba(0,0,0,.6);border:1px solid rgba(232,220,192,.22)}
+  .vtrack>div{height:100%;width:0%;background:var(--parchment)}
+  .pips{display:flex;gap:4px}
+  .pip{width:16px;height:6px;border:1px solid rgba(232,220,192,.3)}
+  .pip.on{background:var(--parchment)}
+  .vkey{border:1px solid rgba(232,220,192,.35);border-radius:2px;padding:1px 4px;font-size:.5rem}
+  .vrow.ready .vkey{border-color:var(--gold);color:var(--gold)}
   #hpbar{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);width:min(340px,80vw);height:14px;
     background:rgba(0,0,0,.6);border:1px solid rgba(232,220,192,.22);pointer-events:none}
   #hpfill{height:100%;width:100%;background:linear-gradient(90deg,#8B2E2E,#C0503A);transition:width .12s}
@@ -83,6 +94,18 @@
   #spectate .sp-k{color:var(--bone);font-size:.6rem;margin-top:.35rem}
   #leave{position:fixed;bottom:10px;right:10px;z-index:5}
   /* shared level-up draft */
+  #sheet{position:fixed;inset:0;z-index:42;display:none;place-items:center;
+    background:rgba(6,5,10,.95);backdrop-filter:blur(4px);overflow-y:auto}
+  #sheet.on{display:grid}
+  .sh-wrap{width:min(700px,94vw);padding:2rem 1rem;text-align:center}
+  .sh-h{font-family:var(--display);font-size:1.5rem;color:var(--gold);margin-bottom:.3rem}
+  .sh-sub{font-family:var(--body);font-style:italic;color:var(--bone);font-size:.85rem;margin-bottom:1.4rem}
+  .sh-sec{text-align:left;border-top:1px solid rgba(232,220,192,.12);padding-top:.9rem;margin-top:1.1rem}
+  .sh-sec h4{font-family:var(--mono);font-size:.58rem;letter-spacing:.2em;text-transform:uppercase;color:var(--gold);margin-bottom:.6rem}
+  .sh-row{display:flex;gap:.7rem;align-items:baseline;padding:.35rem 0;font-size:.82rem;font-family:var(--body);color:var(--bone)}
+  .sh-row b{font-family:var(--display);color:var(--parchment);min-width:150px;font-weight:600}
+  .sh-score{display:grid;grid-template-columns:24px 1fr auto auto;gap:.7rem;padding:.45rem 0;
+    border-bottom:1px solid rgba(232,220,192,.06);font-family:var(--mono);font-size:.72rem;text-align:left}
   #draft{position:fixed;inset:0;z-index:38;display:none;place-items:center;
     background:rgba(6,5,10,.9);backdrop-filter:blur(3px)}
   #draft.on{display:grid}
@@ -124,7 +147,7 @@
 <div id="app">
   <div class="lobby" id="lobby">
     <h1>Dragon Slayers</h1>
-    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 9</span></div>
+    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 13</span></div>
 
     <div class="panel" id="panel-name">
       <h2>Your name</h2>
@@ -152,6 +175,10 @@
       <button class="btn btn--full" id="btn-start" style="margin-top:1rem">Begin the Hunt</button>
     </div>
 
+    <div style="margin-top:.4rem">
+      <button class="btn" id="btn-codex" style="border-color:rgba(232,220,192,.3);color:var(--bone)">Codex</button>
+      <button class="btn" id="btn-scores" style="border-color:rgba(232,220,192,.3);color:var(--bone)">Scoreboard</button>
+    </div>
     <div class="status" id="status"></div>
     <div style="margin-top:1.4rem">
       <a href="index.html" style="font-family:var(--mono);font-size:.6rem;letter-spacing:.16em;
@@ -165,12 +192,19 @@
   <div id="hud"></div>
   <div id="roster"></div>
   <div id="xpbar"><div id="xpfill"></div></div>
+  <div id="verbs">
+    <div class="vrow"><span>DODGE</span><div class="pips" id="dash-pips"></div><span class="vkey">Space</span></div>
+    <div class="vrow" id="ult-row"><span>ULT</span><div class="vtrack"><div id="ult-fill"></div></div><span class="vkey">Q</span></div>
+    <div class="vrow" id="repel-row"><span>REPEL</span><div class="vtrack"><div id="repel-fill"></div></div><span class="vkey">R</span></div>
+  </div>
   <div id="hpbar"><div id="hpfill"></div></div>
   <div id="banner"></div>
   <div id="spectate" class="hidden"></div>
   <div id="draft"></div>
+  <div id="sheet"><div class="sh-wrap"><div id="sh-body"></div>
+    <button class="btn" id="btn-sheet-close" style="margin-top:1.2rem">Back</button></div></div>
   <button class="btn" id="leave">Leave</button>
-  <div class="help">WASD move · arts strike on their own</div>
+  <div class="help">WASD move · Space dodge · Q ultimate · R repel · arts strike on their own</div>
 </div>
 <script>
 "use strict";
@@ -272,7 +306,94 @@ const RELICS={
   wyrmcrown: { name:'The Wyrmcrown',   c:'#E8C86A', boon:'the greatest hoard', apply:p=>{p.up.dmg+=2;p.up.cd+=1;p.maxhp+=20;p.hp+=20;} },
 };
 const RELIC_KEYS=Object.keys(RELICS);
+const ITEMS = [
+  { id:'damage',   name:'Dragonfang',           stat:'damage',   v:.08, pct:true,  g:'✦' },
+  { id:'haste',    name:'Chronoscale',          stat:'haste',    v:.06, pct:true,  g:'⧗' },
+  { id:'area',     name:'Wyrm Sigil',           stat:'area',     v:.08, pct:true,  g:'◎' },
+  { id:'duration', name:'Everscale',            stat:'duration', v:.10, pct:true,  g:'∞' },
+  { id:'velocity', name:'Windscale',            stat:'velocity', v:.12, pct:true,  g:'➤' },
+  { id:'move',     name:'Talon Greaves',        stat:'move',     v:.05, pct:true,  g:'⇈' },
+  { id:'maxhp',    name:'Heart of the Wyrm',    stat:'maxhp',    v:16,  pct:false, g:'♥' },
+  { id:'armor',    name:'Scalemail',            stat:'armor',    v:.03, pct:true,  g:'⛨' },
+  { id:'crit',     name:"Slayer's Eye",         stat:'crit',     v:.045,pct:true,  g:'◉' },
+  { id:'critdmg',  name:"Executioner's Mark",   stat:'critdmg',  v:.25, pct:true,  g:'✖' },
+  { id:'magnet',   name:'Lodestone',            stat:'magnet',   v:.18, pct:true,  g:'❋' },
+  { id:'xp',       name:"Sage's Tome",          stat:'xp',       v:.09, pct:true,  g:'❖' },
+  { id:'regen',    name:'Verdant Charm',        stat:'regen',    v:.5,  pct:false, g:'✚' },
+];
+
+const RARITY = [
+  { id:'common',    name:'Common',    m:1.00, c:'#C9C3B4', w:100 },
+  { id:'uncommon',  name:'Uncommon',  m:1.55, c:'#6FCB7A', w:58  },
+  { id:'rare',      name:'Rare',      m:2.30, c:'#5AA9E6', w:30  },
+  { id:'epic',      name:'Epic',      m:3.40, c:'#B77BE8', w:13  },
+  { id:'legendary', name:'Legendary', m:5.20, c:'#E8A33D', w:4   },
+];
+const ELITE = { name:'Dragon', hp:340, sp:52, r:30, dmg:24, xp:44, c:'#F2C14E', c2:'#FFF0B8' };
+const ITEM_R=26;
+/* Stat relics dropped by the slain. Like the Wyrmhoard, whoever reaches one
+   first keeps it — the drop is consumed for everyone else. */
+function rollRarity(r){
+  const total=RARITY.reduce((a,b)=>a+b.w,0);
+  let n=r()*total;
+  for(const R of RARITY){ n-=R.w; if(n<=0) return R; }
+  return RARITY[0];
+}
+function hostDropItem(x,y){
+  const r=Math.random;
+  const def=ITEMS[(r()*ITEMS.length)|0];
+  const rar=rollRarity(r);
+  G.drops.push({ id:G.nextId++, x, y, item:def.id, rar:rar.id, ph:r()*6.28 });
+}
+function tickDrops(){
+  if(!Net.isHost) return;
+  if(G.drops.length>MAX_DROPS) G.drops.splice(0, G.drops.length-MAX_DROPS);
+  for(const it of G.drops){
+    if(it.taken) continue;
+    for(const p of Net.players.values()){
+      if(!p.alive) continue;
+      if(Math.hypot(p.x-it.x,p.y-it.y)<ITEM_R+WORLD.PLAYER_R){
+        it.taken=true;
+        const def=ITEMS.find(d=>d.id===it.item), rar=RARITY.find(R=>R.id===it.rar);
+        if(def&&rar) applyItemStat(p,def,rar);
+        hostEvent({t:'ev',k:'item',iid:it.id,item:it.item,rar:it.rar,who:p.id,name:p.name});
+        break;
+      }
+    }
+  }
+  G.drops=G.drops.filter(it=>!it.taken);
+}
+// stat relics feed the same per-player multipliers the draft uses
+function applyItemStat(p,def,rar){
+  if(!p.up) p.up={dmg:0,hp:0,spd:0,cd:0,area:0,art:0};
+  const v=def.v*rar.m;
+  switch(def.stat){
+    case 'damage': p.up.dmg+=v/0.12; break;
+    case 'haste':  p.up.cd +=v/0.10; break;
+    case 'area':   p.up.area+=v/0.15; break;
+    case 'move':   p.up.spd+=v/0.08; break;
+    case 'maxhp':  p.maxhp+=v; p.hp=Math.min(p.maxhp,p.hp+v); break;
+    case 'armor':  p.armor=(p.armor||0)+v; break;
+    case 'regen':  p.regen=(p.regen||0)+v; break;
+    default:       p.up.dmg+=v/0.24; break;   // crit/xp/magnet fold into damage
+  }
+}
+
 const RELIC_R=34;
+// player verbs, same numbers as single-player
+const DASH = { TIME:0.28, CD:2.6, SPEED:1150, CHARGES:3 };
+const REPEL = { CD:10, R:220, FORCE:620, STUN:0.8, DMG:12 };
+const ULTIMATE = {
+  ember:  { name:'Triple Cinder', desc:'three great fireballs, piercing all they touch', cd:38 },
+  tide:   { name:'Tidepool',      desc:'a healing pool blooms where you stand',          cd:42 },
+  thorn:  { name:'Wildward',      desc:'your regen and armour surge',                    cd:40 },
+  stone:  { name:'Stoneguard',    desc:'a shield that soaks all damage, then shatters',  cd:40 },
+  forge:  { name:'Iron Wall',     desc:'a wall that blocks and splits the swarm',        cd:38 },
+  gale:   { name:'Tailwind',      desc:'your move speed and regen surge',                cd:40 },
+  dawn:   { name:'Dawnbreak',     desc:'a burst of light heals you for half your health',cd:44 },
+  umbral: { name:'Umbral Pact',   desc:'a shadow dragon hunts at your side',             cd:44 },
+  storm:  { name:'Storm Ring',    desc:'a ring of lightning orbits you',                 cd:40 },
+};
 function seedRelics(){
   // deterministic, like the shrines, so everyone sees the same buried hoard
   const r=mulberry32(Net.seed^0x5EED1);
@@ -287,8 +408,10 @@ function seedRelics(){
    SHARED xp when collected — so the party levels together even though only one
    of you actually ran over the gem. */
 const GEM_MAGNET=150;
+const GEM_LIFE=45, MAX_GEMS=260, MAX_DROPS=60;
 function tickGems(dt){
   for(const g of G.gems){
+    g.life=(g.life===undefined?GEM_LIFE:g.life)-dt;
     // drift toward the nearest living slayer once they're close enough
     let best=null,bd=GEM_MAGNET;
     for(const p of Net.players.values()){
@@ -307,7 +430,9 @@ function tickGems(dt){
       g.dead=true; hostGrantXP(g.v);
     }
   }
-  G.gems=G.gems.filter(g=>!g.dead);
+  G.gems=G.gems.filter(g=>!g.dead && g.life>0);
+  // hard cap: drop the oldest if the field is drowning in uncollected xp
+  if(G.gems.length>MAX_GEMS) G.gems.splice(0, G.gems.length-MAX_GEMS);
 }
 
 // host only: first living slayer to touch a relic claims it outright
@@ -899,7 +1024,7 @@ const PLAYER_SPRITE_F = {
 };
 
 // co-op enemy kinds -> single-player sprite maps
-const KIND_SPRITE = { drake:'drake', wyvern:'wyvern', salamander:'salamander', brute:'hydra' };
+const KIND_SPRITE = { drake:'drake', wyvern:'wyvern', salamander:'salamander', brute:'hydra', elite:'serpent' };
 // which slayer sprite an order uses — keyed by gender (from the character art)
 // and then by role, exactly as single-player does it
 function coopPlayerSprite(order){
@@ -1001,6 +1126,7 @@ function handleData(fromId,conn,d){
     case 'hit': if(Net.isHost) hostApplyDamage(d.id,d.d,d.by); break;
     // --- a slayer has chosen their level-up upgrade ---
     case 'pick': if(Net.isHost) hostReceivePick(d.id,d.up); break;
+    case 'repel': if(Net.isHost){ const rp=Net.players.get(d.id); if(rp) hostRepel(rp); } break;
     // --- somebody attacked: render it so teammates aren't silently fighting ---
     case 'atk':
       spawnRemoteAttack(d);
@@ -1047,6 +1173,15 @@ function spawnRemoteAttack(d){
     case 'aura':  spawnFx({type:'aura',x:p.x,y:p.y,r:105,life:0.45,max:0.45,c:O.c2,owner:d.id}); break;
     case 'zone':  spawnFx({type:'zone',x:p.x+Math.cos(ang)*140,y:p.y+Math.sin(ang)*140,r:92,life:3.2,max:3.2,c:O.c2,owner:d.id}); break;
     case 'orbit': spawnFx({type:'orbit',owner:d.id,life:2.4,max:2.4,c:O.c2,n:3,ph:0}); break;
+    case 'dash':
+      G.fx.push({type:'p',x:p.x,y:p.y,vx:0,vy:0,life:.3,max:.3,c:'#ffffff',r:3});
+      break;
+    case 'repel':
+      spawnFx({type:'nova',x:p.x,y:p.y,r:10,max:REPEL.R,c:O.c2,owner:d.id,life:.5,max:.5});
+      break;
+    case 'ult':
+      spawnFx({type:'nova',x:p.x,y:p.y,r:10,max:220,c:O.c2,owner:d.id,life:.6,max:.6});
+      break;
     case 'chain': spawnFx({type:'arc',x1:p.x,y1:p.y,x2:p.x+Math.cos(ang)*200,y2:p.y+Math.sin(ang)*200,life:.18,max:.18,c:O.c2}); break;
   }
 }
@@ -1059,7 +1194,9 @@ function addPlayer(p){
     x:0,y:0,tx:0,ty:0, aim:0,
     hp:O.hp, maxhp:O.hp, alive:true, kills:0,
     atkT:0, face:1,
-    up:{ dmg:0, hp:0, spd:0, cd:0, area:0, art:0 },   // upgrades chosen at level-ups
+    up:{ dmg:0, hp:0, spd:0, cd:0, area:0, art:0 },
+    dash:{ t:0, charges:DASH.CHARGES, recharge:0 },   // Space
+    ultCd:0, repelCd:0, shield:0,                     // Q and R
   });
   if(Net.onRoster) Net.onRoster();
 }
@@ -1126,6 +1263,12 @@ const keys={};
 addEventListener('keydown',e=>{
   keys[e.key.toLowerCase()]=true;
   if(['arrowleft','arrowright','arrowup','arrowdown',' '].includes(e.key.toLowerCase())) e.preventDefault();
+  const k=e.key.toLowerCase();
+  if(G.running && amAlive() && !G.paused){
+    if(k===' ')  tryDash();
+    if(k==='q')  tryUltimate();
+    if(k==='r')  tryRepel();
+  }
   // SPECTATE: cycle who you're watching with left/right arrows
   if(G.running && !amAlive()){
     if(e.key==='ArrowLeft')  cycleSpectate(-1);
@@ -1142,6 +1285,7 @@ const G={
   teamBuff:0,        // seconds of Charge Shrine damage surge (party-wide)
   allies:[],         // fey dragons summoned by shrines
   gems:[],           // experience dropped by the slain, collected on the ground
+  drops:[],          // stat relics dropped by the slain — first taker keeps them
   relics:[],         // buried Wyrmhoard relics — first finder keeps them
   draft:null,        // shared level-up: {choices, picked:Set} — pauses everyone
   paused:false,
@@ -1259,13 +1403,14 @@ function update(dt,now){
   if(watch){ G.cam.x+=(watch.x-G.cam.x)*Math.min(1,dt*8); G.cam.y+=(watch.y-G.cam.y)*Math.min(1,dt*8); }
 
   // --- my attacks (everyone fires their own art; host resolves damage) ---
-  if(me && me.alive) tickMyAttack(dt);
+  if(me && me.alive){ tickVerbs(dt); tickMyAttack(dt); }
 
   // --- bullets move on every client (visual), but only the host scores hits ---
   tickBullets(dt);
   tickFx(dt);
   tickShrines(dt);
   tickGems(dt);
+  tickDrops();
   tickRelics();
   // relic regen — a slow trickle back for whoever found the Tide Pearl
   for(const p of Net.players.values())
@@ -1292,6 +1437,122 @@ function update(dt,now){
 }
 
 // ---- attacks -------------------------------------------------------
+/* ---- THE PLAYER VERBS: dodge, repel, ultimate.
+   Movement and visuals are local so they feel instant; anything that damages
+   or moves an enemy is reported to the host, which stays the single truth. */
+function tryDash(){
+  const me=Net.players.get(Net.myId); if(!me) return;
+  const d=me.dash;
+  if(d.t>0 || d.charges<=0) return;
+  let mx=(keys['d']?1:0)-(keys['a']?1:0);
+  let my=(keys['s']?1:0)-(keys['w']?1:0);
+  if(!mx&&!my){ mx=me.face>=0?1:-1; }
+  const l=Math.hypot(mx,my)||1;
+  d.t=DASH.TIME; d.charges--; d.dx=mx/l; d.dy=my/l;
+  broadcastAttack('dash', Math.atan2(d.dy,d.dx));
+}
+function tickDash(dt){
+  const me=Net.players.get(Net.myId); if(!me) return;
+  const d=me.dash;
+  if(d.t>0){
+    d.t-=dt;
+    me.x+=d.dx*DASH.SPEED*dt; me.y+=d.dy*DASH.SPEED*dt;
+    me.tx=me.x; me.ty=me.y;
+    G.fx.push({type:'p',x:me.x,y:me.y,vx:0,vy:0,life:.25,max:.25,c:'#ffffff',r:3});
+  }
+  if(d.charges<DASH.CHARGES){
+    d.recharge-=dt;
+    if(d.recharge<=0){ d.charges++; d.recharge=DASH.CD; }
+  }
+}
+function tryRepel(){
+  const me=Net.players.get(Net.myId); if(!me||me.repelCd>0) return;
+  me.repelCd=REPEL.CD;
+  const O=ORDERS[me.order]||ORDERS.ember;
+  G.fx.push({type:'nova',x:me.x,y:me.y,r:10,max:REPEL.R,c:O.c2,owner:me.id,life:.5,max:.5});
+  for(let i=0;i<26;i++){ const a=(i/26)*6.2832;
+    G.fx.push({type:'p',x:me.x,y:me.y,vx:Math.cos(a)*280,vy:Math.sin(a)*280,life:.4,max:.4,c:O.c2,r:3}); }
+  broadcastAttack('repel',0);
+  // the host applies the shove and the damage
+  if(Net.isHost) hostRepel(me);
+  else sendHost({t:'repel',id:me.id,x:Math.round(me.x),y:Math.round(me.y)});
+}
+function hostRepel(me){
+  for(const e of G.enemies){
+    if(!e.alive) continue;
+    const dx=e.x-me.x, dy=e.y-me.y, d=Math.hypot(dx,dy)||1;
+    if(d>REPEL.R) continue;
+    const falloff=1-d/REPEL.R;
+    e.x+=(dx/d)*REPEL.FORCE*falloff*0.06;
+    e.y+=(dy/d)*REPEL.FORCE*falloff*0.06;
+    e.stunT=REPEL.STUN;
+    hostApplyDamage(e.id, REPEL.DMG*teamPower(), me.id);
+  }
+}
+function tryUltimate(){
+  const me=Net.players.get(Net.myId); if(!me||me.ultCd>0) return;
+  const U=ULTIMATE[me.order]||ULTIMATE.ember;
+  const O=ORDERS[me.order]||ORDERS.ember;
+  me.ultCd=U.cd;
+  banner(U.name, U.desc);
+  broadcastAttack('ult', me.aim||0);
+  const dmgM=teamPower()*pDmg(me);
+  switch(me.order){
+    case 'ember': {
+      const ang=me.aim||0;
+      for(let i=0;i<3;i++){
+        const a=ang+(i-1)*0.22;
+        spawnBullet(me.id,me.x,me.y,Math.cos(a)*640,Math.sin(a)*640,22,70*dmgM,O.c,O.c2,99);
+      }
+      break;
+    }
+    case 'tide':
+      spawnFx({type:'heal',x:me.x,y:me.y,r:150,life:8,max:8,c:O.c2,owner:me.id,tick:0});
+      break;
+    case 'thorn': me.regenT=8; me.armorT=8; break;
+    case 'stone':
+      me.shield=5;
+      spawnFx({type:'shield',owner:me.id,x:me.x,y:me.y,life:5,max:5,c:O.c2,dmg:90*dmgM});
+      break;
+    case 'forge': {
+      const ang=me.aim||0;
+      spawnFx({type:'wall',x:me.x+Math.cos(ang)*90,y:me.y+Math.sin(ang)*90,
+               ang:ang+Math.PI/2,len:200,life:9,max:9,c:O.c2,owner:me.id,dmg:8*dmgM,tick:0});
+      break;
+    }
+    case 'gale': me.hasteT=8; me.regenT=8; break;
+    case 'dawn':
+      me.hp=Math.min(me.maxhp, me.hp+me.maxhp*0.5);
+      spawnFx({type:'nova',x:me.x,y:me.y,r:10,max:300,c:O.c2,owner:me.id,dmg:40*dmgM,hit:new Set(),life:.6,max:.6});
+      break;
+    case 'umbral':
+      spawnFx({type:'wisp',owner:me.id,x:me.x,y:me.y,life:12,max:12,c:O.c2,dmg:26*dmgM,fireT:0});
+      break;
+    case 'storm':
+      spawnFx({type:'orbit',owner:me.id,life:7,max:7,c:O.c2,dmg:24*dmgM,n:5,ph:0,rad:90,hit:new Set()});
+      break;
+  }
+}
+function tickVerbs(dt){
+  const me=Net.players.get(Net.myId); if(!me) return;
+  if(me.ultCd>0)   me.ultCd=Math.max(0,me.ultCd-dt);
+  if(me.repelCd>0) me.repelCd=Math.max(0,me.repelCd-dt);
+  if(me.shield>0){
+    me.shield-=dt;
+    if(me.shield<=0){
+      const O=ORDERS[me.order]||ORDERS.ember;
+      spawnFx({type:'nova',x:me.x,y:me.y,r:10,max:420,c:O.c2,owner:me.id,
+               dmg:90*teamPower()*pDmg(me),hit:new Set(),life:.6,max:.6});
+      banner('STONEGUARD SHATTERS','');
+    }
+  }
+  // timed self-buffs from Wildward / Tailwind
+  if(me.regenT>0){ me.regenT-=dt; me.hp=Math.min(me.maxhp, me.hp+7*dt); }
+  if(me.hasteT>0) me.hasteT-=dt;
+  if(me.armorT>0) me.armorT-=dt;
+  tickDash(dt);
+}
+
 /* ---- ARTS. The real nine archetypes from single-player, fired locally for
    responsiveness but resolving damage through the host. Each player carries
    their own chosen arts and ranks, exactly as in the solo game. ---- */
@@ -1392,6 +1653,26 @@ function tickFx(dt){
     if(f.type==='aura'){ const o=Net.players.get(f.owner); if(o){ f.x=o.x; f.y=o.y; } }
     if(f.type==='zone'){ f.tick-=dt; }
     if(f.type==='beam'){ const o=Net.players.get(f.owner); if(o){ f.x=o.x; f.y=o.y; } }
+    if(f.type==='shield'){ const o=Net.players.get(f.owner); if(o){ f.x=o.x; f.y=o.y; } }
+    if(f.type==='heal' && f.owner===Net.myId){
+      f.tick-=dt;
+      if(f.tick<=0){ f.tick=0.5;
+        const me2=Net.players.get(Net.myId);
+        if(me2 && Math.hypot(me2.x-f.x,me2.y-f.y)<f.r) me2.hp=Math.min(me2.maxhp,me2.hp+6);
+      }
+    }
+    if(f.type==='wall' && f.owner===Net.myId){
+      f.tick-=dt;
+      if(f.tick<=0){ f.tick=0.4;
+        for(const e of G.enemies){
+          if(!e.alive) continue;
+          const rx=e.x-f.x, ry=e.y-f.y;
+          const along=rx*Math.cos(f.ang)+ry*Math.sin(f.ang);
+          const perp =Math.abs(-rx*Math.sin(f.ang)+ry*Math.cos(f.ang));
+          if(Math.abs(along)<f.len/2 && perp<26){ e.stunT=0.3; reportHit(e.id,f.dmg,f.owner); }
+        }
+      }
+    }
     if(f.type==='wisp'){
       // a bound spirit that hunts on its own
       const o=Net.players.get(f.owner);
@@ -1535,10 +1816,28 @@ const ENEMY_KINDS={
   wyvern:     {r:14,hp:13,sp:104,dmg:8, xp:2, c:'#7A6BA8',c2:'#C0B2E8', fly:true},
   salamander: {r:12,hp:20,sp:66, dmg:11,xp:2, c:'#C4542E',c2:'#FFB067'},
   brute:      {r:19,hp:52,sp:52, dmg:16,xp:5, c:'#6E7B52',c2:'#B8C98A'},
+  elite:      {r:30,hp:340,sp:52,dmg:24,xp:44,c:'#F2C14E',c2:'#FFF0B8'},
 };
 const KIND_KEYS=Object.keys(ENEMY_KINDS);
 
 function hostSpawn(dt){
+  // ELITES run on their own timer. They used to sit inside the normal spawner,
+  // which returns early once the swarm hits its cap — so once the field filled
+  // (about 90s in) an elite could never appear at all.
+  G.eliteT=(G.eliteT===undefined?38:G.eliteT)-dt;
+  if(G.eliteT<=0 && G.t>40){
+    G.eliteT=34+G.rng()*22;
+    const targets=[...Net.players.values()].filter(p=>p.alive);
+    const anchor=targets.length?targets[(G.rng()*targets.length)|0]:{x:0,y:0};
+    const ea=G.rng()*6.2832, ed=620+G.rng()*140, scale=1+G.t/95;
+    G.enemies.push({
+      id:G.nextId++, kind:'elite', elite:true, alive:true,
+      x:anchor.x+Math.cos(ea)*ed, y:anchor.y+Math.sin(ea)*ed,
+      hp:ELITE.hp*scale, maxhp:ELITE.hp*scale, r:ELITE.r, sp:ELITE.sp,
+      dmg:ELITE.dmg, xp:ELITE.xp, fly:false, hitT:0, ph:G.rng()*6.28, stunT:0,
+    });
+    hostEvent({t:'ev',k:'say',h:'AN ELITE STALKS THE FIELD',s:'it will not fall easily'});
+  }
   if(G.enemies.length>=WORLD.MAX_ENEMIES) return;
   // difficulty ramps with time and with how many slayers are alive
   const alive=[...Net.players.values()].filter(p=>p.alive).length||1;
@@ -1557,7 +1856,8 @@ function hostSpawn(dt){
     const anchor=targets.length?targets[(G.rng()*targets.length)|0]:{x:0,y:0};
     const a=G.rng()*6.2832, dist=620+G.rng()*180;
     const K=ENEMY_KINDS[kind];
-    const scale=1+G.t/95;   // enemies get tougher as the run goes on
+    const scale=1+G.t/95;
+  // enemies get tougher as the run goes on
     G.enemies.push({
       id:G.nextId++, kind, alive:true,
       x:anchor.x+Math.cos(a)*dist, y:anchor.y+Math.sin(a)*dist,
@@ -1577,6 +1877,7 @@ function hostMoveEnemies(dt){
       if(d<bd){ bd=d; best=p; }
     }
     if(!best) continue;
+    if(e.stunT>0){ e.stunT-=dt; e.ph+=dt*4; continue; }   // repelled: briefly rooted
     const dx=best.x-e.x, dy=best.y-e.y, d=Math.hypot(dx,dy)||1;
     e.x+=(dx/d)*e.sp*dt; e.y+=(dy/d)*e.sp*dt;
     e.ph+=dt*(e.fly?9:5);
@@ -1609,6 +1910,7 @@ function hostApplyDamage(enemyId,dmg,by){
     const killer=Net.players.get(by);
     if(killer) killer.kills=(killer.kills||0)+1;
     // the slain drop their experience on the ground — someone has to go get it
+    if(e.elite || Math.random()<0.035) hostDropItem(e.x,e.y);
     G.gems.push({ id:G.nextId++, x:e.x, y:e.y, v:e.xp, vx:(Math.random()-0.5)*70, vy:(Math.random()-0.5)*70 });
     // NOTE: no network event for the death. It was 21% of all traffic for a
     // purely cosmetic puff of particles — clients now spawn that themselves
@@ -1619,6 +1921,7 @@ function hostApplyDamage(enemyId,dmg,by){
 }
 function hostHurtPlayer(p,amount){
   if(!p.alive) return;
+  if(p.shield>0) return;                        // Stoneguard soaks it entirely
   p.hp-=amount*(1-Math.min(0.7,p.armor||0));   // armour from relics softens the blow
   // no 'hurt' event: player health already travels in every snapshot, and this
   // fired constantly (26% of all traffic) for information nobody consumed
@@ -1695,12 +1998,13 @@ function hostSnapshot(now){
         p:players, s:shrines,
         r:G.relics.filter(r=>r.taken).map(r=>r.id),
         g:G.gems.slice(0,90).map(g=>[g.id,Math.round(g.x),Math.round(g.y),g.v]),
+        dr:G.drops.slice(0,40).map(it=>[it.id,Math.round(it.x),Math.round(it.y),it.item,it.rar]),
         xp:G.xp, lv:G.lv, xn:G.xpNext, gt:Math.round(G.t),
       });
     }catch(err){}
   }
 }
-const KIND_BY_LETTER={d:'drake',w:'wyvern',s:'salamander',b:'brute'};
+const KIND_BY_LETTER={d:'drake',w:'wyvern',s:'salamander',b:'brute',e:'elite'};
 function applySnapshot(d){
   if(Net.isHost) return;   // the host IS the truth; never overwrite itself
   // reconcile enemies: update known, add new, drop missing
@@ -1744,6 +2048,14 @@ function applySnapshot(d){
     }
     G.gems=G.gems.filter(g=>seenG.has(g.id));
   }
+  if(d.dr){
+    const seenD=new Set();
+    for(const [id,x,y,item,rar] of d.dr){
+      seenD.add(id);
+      if(!G.drops.find(q=>q.id===id)) G.drops.push({id,x,y,item,rar,ph:Math.random()*6.28});
+    }
+    G.drops=G.drops.filter(it=>seenD.has(it.id));
+  }
   for(const rid of (d.r||[])){ const rel=G.relics.find(q=>q.id===rid); if(rel) rel.taken=true; }
   for(const [id,prog,used] of (d.s||[])){
     const s=G.shrines.find(q=>q.id===id);
@@ -1780,6 +2092,15 @@ function applyEvent(d){
       openDraft(d.lv);
       break;
     case 'resume': closeDraft(); break;
+    case 'item': {
+      G.drops=G.drops.filter(it=>it.id!==d.iid);
+      const def=ITEMS.find(x=>x.id===d.item), rar=RARITY.find(R=>R.id===d.rar);
+      const p2=Net.players.get(d.who);
+      if(p2 && def && rar && !Net.isHost) applyItemStat(p2,def,rar);
+      if(d.who===Net.myId && def && rar)
+        banner(def.name, rar.name.toLowerCase()+' — claimed');
+      break;
+    }
     case 'relic': {
       const rel=G.relics.find(r=>r.id===d.rid);
       if(rel){ rel.taken=true; rel.by=d.who; }
@@ -1841,6 +2162,7 @@ function showEnd(won){
       <div class="e-roster">${rows}</div>
       <button class="btn" id="btn-again">Hunt Again</button>
     </div>`;
+  saveCoopScore({ name:Net.myName, kills:G.kills, lv:G.lv, time:tstr, won:!!won, ts:Date.now() });
   el.classList.add('on');
   const again=document.getElementById('btn-again');
   if(again) again.onclick=()=>location.reload();
@@ -2052,6 +2374,30 @@ function render(){
       ctx.beginPath(); ctx.moveTo(f.x,f.y);
       ctx.lineTo(f.x+Math.cos(f.ang)*f.len, f.y+Math.sin(f.ang)*f.len); ctx.stroke();
       ctx.restore();
+    } else if(f.type==='heal'){
+      ctx.save(); ctx.globalAlpha=.18+.12*Math.sin(G.t*3);
+      ctx.fillStyle=f.c; ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,6.2832); ctx.fill();
+      ctx.globalAlpha=.8; ctx.strokeStyle=f.c; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(f.x,f.y,f.r,0,6.2832); ctx.stroke(); ctx.restore();
+    } else if(f.type==='shield'){
+      const near_end=f.life<1.2;
+      ctx.save();
+      ctx.strokeStyle=near_end?'#FF8C3A':f.c; ctx.lineWidth=4;
+      ctx.globalAlpha=.5+.5*Math.abs(Math.sin(G.t*(near_end?12:3)));
+      ctx.beginPath(); ctx.arc(f.x,f.y,44,0,6.2832); ctx.stroke();
+      ctx.globalAlpha=1;
+      for(let i=0;i<8;i++){ const a=(i/8)*6.2832+G.t*0.4;
+        ctx.fillStyle=near_end?'#C0503A':f.c;
+        ctx.save(); ctx.translate(f.x+Math.cos(a)*44,f.y+Math.sin(a)*44); ctx.rotate(a);
+        ctx.fillRect(-5,-4,10,8); ctx.restore(); }
+      ctx.restore();
+    } else if(f.type==='wall'){
+      ctx.save(); ctx.translate(f.x,f.y); ctx.rotate(f.ang);
+      ctx.fillStyle=f.c; ctx.globalAlpha=.85;
+      ctx.fillRect(-f.len/2,-7,f.len,14);
+      ctx.globalAlpha=1; ctx.strokeStyle='#E6EEF5'; ctx.lineWidth=2;
+      ctx.strokeRect(-f.len/2,-7,f.len,14);
+      ctx.restore();
     } else if(f.type==='wisp'){
       const g2=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,16);
       g2.addColorStop(0,f.c); g2.addColorStop(1,f.c+'00');
@@ -2172,6 +2518,25 @@ function drawShrines(){
       ctx.font='italic 10px Georgia,serif'; ctx.fillStyle=col+'AA';
       ctx.fillText(T.tip,s.x,s.y-30);
     }
+  }
+  // stat relics dropped by the slain
+  for(const it of G.drops){
+    if(Math.abs(it.x-G.cam.x)>W/2+60||Math.abs(it.y-G.cam.y)>H/2+60) continue;
+    const rar=RARITY.find(R=>R.id===it.rar)||RARITY[0];
+    const def=ITEMS.find(d2=>d2.id===it.item);
+    const bob=Math.sin(G.t*3+it.ph)*3;
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    const g=ctx.createRadialGradient(it.x,it.y+bob,0,it.x,it.y+bob,22);
+    g.addColorStop(0,rar.c+'88'); g.addColorStop(1,rar.c+'00');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(it.x,it.y+bob,22,0,6.2832); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle='rgba(0,0,0,.55)';
+    ctx.fillRect(it.x-9,it.y-9+bob,18,18);
+    ctx.strokeStyle=rar.c; ctx.lineWidth=1.5;
+    ctx.strokeRect(it.x-9,it.y-9+bob,18,18);
+    ctx.fillStyle=rar.c; ctx.font='11px Georgia,serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(def?def.g:'?', it.x, it.y+bob);
+    ctx.textBaseline='alphabetic';
   }
   // experience gems on the ground
   for(const g of G.gems){
@@ -2305,6 +2670,25 @@ function updateHUD(){
   }
   document.getElementById('xpfill').style.width=Math.min(100,(G.xp/G.xpNext)*100)+'%';
 
+  // verb readouts
+  if(me){
+    const pips=document.getElementById('dash-pips');
+    if(pips){ let h='';
+      for(let i=0;i<DASH.CHARGES;i++) h+=`<div class="pip${i<(me.dash?me.dash.charges:0)?' on':''}"></div>`;
+      pips.innerHTML=h; }
+    const U=ULTIMATE[me.order]||ULTIMATE.ember;
+    const uf=document.getElementById('ult-fill');
+    if(uf){ const rdy=me.ultCd<=0;
+      uf.style.width=(rdy?100:(1-me.ultCd/U.cd)*100)+'%';
+      uf.style.background=rdy?(ORDERS[me.order]||ORDERS.ember).c2:'rgba(232,220,192,.4)';
+      const row=document.getElementById('ult-row'); if(row) row.classList.toggle('ready',rdy); }
+    const rf=document.getElementById('repel-fill');
+    if(rf){ const rdy=me.repelCd<=0;
+      rf.style.width=(rdy?100:(1-me.repelCd/REPEL.CD)*100)+'%';
+      rf.style.background=rdy?(ORDERS[me.order]||ORDERS.ember).c2:'rgba(232,220,192,.4)';
+      const row=document.getElementById('repel-row'); if(row) row.classList.toggle('ready',rdy); }
+  }
+
   // spectate panel
   const sp=document.getElementById('spectate');
   if(me && !me.alive && !G.over){
@@ -2314,6 +2698,60 @@ function updateHUD(){
       <div class="sp-w">${w?('watching '+w.name):'no one left standing'}</div>
       <div class="sp-k">← → switch · a friend must charge a Revive Shrine</div>`;
   } else sp.classList.add('hidden');
+}
+
+/* ---- CODEX + SCOREBOARD ---- */
+const CO_SCORE_KEY='dss_coop_scores_v1';
+function loadCoopScores(){ try{ return JSON.parse(localStorage.getItem(CO_SCORE_KEY)||'[]'); }catch(e){ return []; } }
+function saveCoopScore(rec){
+  try{
+    const l=loadCoopScores(); l.push(rec);
+    l.sort((a,b)=>b.kills-a.kills);
+    localStorage.setItem(CO_SCORE_KEY, JSON.stringify(l.slice(0,10)));
+  }catch(e){}
+}
+function openSheet(html){
+  document.getElementById('sh-body').innerHTML=html;
+  document.getElementById('sheet').classList.add('on');
+}
+function showCodex(){
+  const orders=ORDER_KEYS.map(k=>{
+    const O=ORDERS[k], U=ULTIMATE[k];
+    return `<div class="sh-row"><b style="color:${O.c}">${O.name}</b>
+      <span>${O.role} · ${U.name} — ${U.desc}</span></div>`;
+  }).join('');
+  const arts=ARCH_KEYS.map(k=>`<div class="sh-row"><b>${k}</b><span>${DESCS[k]}</span></div>`).join('');
+  const shrines=SHRINE_KEYS.map(k=>{
+    const T=SHRINE_TYPES[k];
+    return `<div class="sh-row"><b style="color:${T.c2}">${T.name}</b><span>${T.tip}</span></div>`;
+  }).join('');
+  const relics=Object.values(RELICS).map(R=>
+    `<div class="sh-row"><b style="color:${R.c}">${R.name}</b><span>${R.boon}</span></div>`).join('');
+  openSheet(`<div class="sh-h">Codex</div>
+    <div class="sh-sub">what you are, what you carry, and what waits out there</div>
+    <div class="sh-sec"><h4>The Nine Orders</h4>${orders}</div>
+    <div class="sh-sec"><h4>The Nine Arts</h4>${arts}</div>
+    <div class="sh-sec"><h4>Shrines — shared by the party</h4>${shrines}</div>
+    <div class="sh-sec"><h4>Wyrmhoard — first finder keeps it</h4>${relics}</div>
+    <div class="sh-sec"><h4>Controls</h4>
+      <div class="sh-row"><b>WASD</b><span>move</span></div>
+      <div class="sh-row"><b>Space</b><span>dodge — three charges</span></div>
+      <div class="sh-row"><b>Q</b><span>your order's ultimate</span></div>
+      <div class="sh-row"><b>R</b><span>repel — shove and stun the swarm</span></div>
+      <div class="sh-row"><b>← →</b><span>switch who you watch when fallen</span></div>
+    </div>`);
+}
+function showScores(){
+  const l=loadCoopScores();
+  const rows=l.length?l.map((r,i)=>`<div class="sh-score">
+      <span style="color:var(--gold)">${i+1}</span>
+      <span>${r.name||'a party'}</span>
+      <span>${r.kills} slain · lv ${r.lv}</span>
+      <span style="color:${r.won?'#8FE3A0':'var(--bone)'}">${r.won?'WON':r.time}</span>
+    </div>`).join('') : '<div class="sh-sub">no hunts recorded yet</div>';
+  openSheet(`<div class="sh-h">Scoreboard</div>
+    <div class="sh-sub">your ten best hunts, kept on this device</div>
+    <div class="sh-sec">${rows}</div>`);
 }
 
 function currentName(){
@@ -2331,6 +2769,9 @@ document.getElementById('btn-join').onclick=()=>{
   Net.myName=currentName(); joinRoom(code);
 };
 document.getElementById('btn-start').onclick=()=>beginGame();
+document.getElementById('btn-codex').onclick=()=>showCodex();
+document.getElementById('btn-scores').onclick=()=>showScores();
+document.getElementById('btn-sheet-close').onclick=()=>document.getElementById('sheet').classList.remove('on');
 document.getElementById('leave').onclick=()=>location.reload();
 document.getElementById('join-input').addEventListener('input',e=>{ e.target.value=e.target.value.toUpperCase(); });
 
