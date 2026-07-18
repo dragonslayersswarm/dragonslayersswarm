@@ -82,6 +82,23 @@
   #spectate .sp-w{color:var(--parchment);font-size:.9rem;margin-top:.2rem}
   #spectate .sp-k{color:var(--bone);font-size:.6rem;margin-top:.35rem}
   #leave{position:fixed;bottom:10px;right:10px;z-index:5}
+  /* shared level-up draft */
+  #draft{position:fixed;inset:0;z-index:38;display:none;place-items:center;
+    background:rgba(6,5,10,.9);backdrop-filter:blur(3px)}
+  #draft.on{display:grid}
+  .d-wrap{text-align:center;width:min(680px,94vw);padding:1.5rem}
+  .d-h{font-family:var(--display);font-size:clamp(1.4rem,4vw,2rem);color:var(--gold);letter-spacing:.08em}
+  .d-sub{font-family:var(--body);font-style:italic;color:var(--bone);margin:.3rem 0 1.5rem;font-size:.88rem}
+  .d-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem}
+  @media(max-width:620px){ .d-cards{grid-template-columns:1fr} }
+  .dcard{background:rgba(255,255,255,.02);border:1px solid rgba(232,220,192,.16);
+    padding:1.1rem .8rem;cursor:pointer;transition:all .14s;text-align:center;color:inherit}
+  .dcard:hover{border-color:var(--dc,#C9A227);background:rgba(255,255,255,.05);transform:translateY(-3px)}
+  .dcard.on{border-color:var(--dc,#C9A227);background:rgba(201,162,39,.14)}
+  .d-nm{font-family:var(--display);font-size:1rem;color:var(--parchment);margin-bottom:.35rem}
+  .d-ds{font-family:var(--body);font-size:.78rem;color:var(--bone);line-height:1.4}
+  .d-wait{font-family:var(--mono);font-size:.64rem;letter-spacing:.1em;color:var(--bone);margin-top:1.3rem}
+  .d-timer{color:var(--gold);margin-left:.5rem}
   /* end-of-run summary */
   #endscreen{position:fixed;inset:0;z-index:40;display:none;place-items:center;
     background:rgba(8,6,10,.94);backdrop-filter:blur(4px);overflow-y:auto}
@@ -107,7 +124,7 @@
 <div id="app">
   <div class="lobby" id="lobby">
     <h1>Dragon Slayers</h1>
-    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 5</span></div>
+    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 6</span></div>
 
     <div class="panel" id="panel-name">
       <h2>Your name</h2>
@@ -151,6 +168,7 @@
   <div id="hpbar"><div id="hpfill"></div></div>
   <div id="banner"></div>
   <div id="spectate" class="hidden"></div>
+  <div id="draft"></div>
   <button class="btn" id="leave">Leave</button>
   <div class="help">WASD move · arts strike on their own</div>
 </div>
@@ -297,6 +315,8 @@ function handleData(fromId,conn,d){
     }
     // --- a joiner reporting they hit something; only the host acts on it ---
     case 'hit': if(Net.isHost) hostApplyDamage(d.id,d.d,d.by); break;
+    // --- a slayer has chosen their level-up upgrade ---
+    case 'pick': if(Net.isHost) hostReceivePick(d.id,d.up); break;
     // --- somebody attacked: render it so teammates aren't silently fighting ---
     case 'atk':
       spawnRemoteAttack(d);
@@ -355,6 +375,7 @@ function addPlayer(p){
     x:0,y:0,tx:0,ty:0, aim:0,
     hp:O.hp, maxhp:O.hp, alive:true, kills:0,
     atkT:0, face:1,
+    up:{ dmg:0, hp:0, spd:0, cd:0, area:0, art:0 },   // upgrades chosen at level-ups
   });
   if(Net.onRoster) Net.onRoster();
 }
@@ -434,6 +455,10 @@ const G={
   enemies:[], bullets:[], gems:[], fx:[], shrines:[],
   nextId:1, spawnAcc:0, xp:0, lv:1, xpNext:8, kills:0,
   spectateIdx:0, banner:null, over:false,
+  teamBuff:0,        // seconds of Charge Shrine damage surge (party-wide)
+  allies:[],         // fey dragons summoned by shrines
+  draft:null,        // shared level-up: {choices, picked:Set} — pauses everyone
+  paused:false,
 };
 function amAlive(){ const me=Net.players.get(Net.myId); return me && me.alive; }
 function myOrder(){ const me=Net.players.get(Net.myId); return ORDERS[me?me.order:'ember']||ORDERS.ember; }
@@ -506,6 +531,15 @@ function showFatal(err){
 //  UPDATE
 // ---------------------------------------------------------------------
 function update(dt,now){
+  // --- SHARED DRAFT: the world holds still while the party chooses ---
+  if(G.draft){
+    G.draft.t-=dt;
+    if(Math.ceil(G.draft.t)!==G.draft._shown){ G.draft._shown=Math.ceil(G.draft.t); renderDraft(); }
+    // the host ends it when time runs out so one idle friend can't stall the run
+    if(Net.isHost && G.draft.t<=0) hostCloseDraft();
+    updateHUD();
+    return;
+  }
   G.t+=dt;
   if(G.banner){ G.banner.life-=dt; if(G.banner.life<=0){ G.banner=null; document.getElementById('banner').classList.remove('on'); } }
 
@@ -517,7 +551,7 @@ function update(dt,now){
     if(mx||my){
       const l=Math.hypot(mx,my); mx/=l; my/=l;
       const O=ORDERS[me.order]||ORDERS.ember;
-      me.x+=mx*O.speed*dt; me.y+=my*O.speed*dt;
+      me.x+=mx*O.speed*pSpd(me)*dt; me.y+=my*O.speed*pSpd(me)*dt;
       if(mx) me.face=mx>0?1:-1;
     }
     me.tx=me.x; me.ty=me.y;
@@ -539,6 +573,8 @@ function update(dt,now){
   tickBullets(dt);
   tickFx(dt);
   tickShrines(dt);
+  if(G.teamBuff>0) G.teamBuff=Math.max(0,G.teamBuff-dt);
+  tickAllies(dt);
 
   // --- HOST ONLY: the authoritative world simulation ---
   if(Net.isHost && !G.over){
@@ -569,30 +605,30 @@ function tickMyAttack(dt){
   broadcastAttack(O.art,ang);   // so teammates see my art, not silence
   switch(O.art){
     case 'bolt':
-      me.atkT=0.62;
-      spawnBullet(me.id,me.x,me.y,Math.cos(ang)*560,Math.sin(ang)*560,10,22*O.dmg*teamPower(),O.c,O.c2,2);
+      me.atkT=0.62*pCd(me);
+      spawnBullet(me.id,me.x,me.y,Math.cos(ang)*560,Math.sin(ang)*560,10,22*O.dmg*teamPower()*pDmg(me),O.c,O.c2,2);
       break;
     case 'chain':
-      me.atkT=0.85;
+      me.atkT=0.85*pCd(me);
       if(target) doChain(me,target,O);
       break;
     case 'nova':
-      me.atkT=1.5;
-      spawnFx({type:'nova',x:me.x,y:me.y,r:8,max:150,c:O.c2,owner:me.id,dmg:26*O.dmg*teamPower(),hit:new Set()});
+      me.atkT=1.5*pCd(me);
+      spawnFx({type:'nova',x:me.x,y:me.y,r:8,max:150*pArea(me),c:O.c2,owner:me.id,dmg:26*O.dmg*teamPower()*pDmg(me),hit:new Set()});
       break;
     case 'aura':
-      me.atkT=0.5;
-      spawnFx({type:'aura',x:me.x,y:me.y,r:105,life:0.45,max:0.45,c:O.c2,owner:me.id,dmg:11*O.dmg*teamPower(),hit:new Set()});
+      me.atkT=0.5*pCd(me);
+      spawnFx({type:'aura',x:me.x,y:me.y,r:105*pArea(me),life:0.45,max:0.45,c:O.c2,owner:me.id,dmg:11*O.dmg*teamPower()*pDmg(me),hit:new Set()});
       break;
     case 'zone': {
-      me.atkT=1.9;
+      me.atkT=1.9*pCd(me);
       const t2=target||{x:me.x+Math.cos(ang)*140,y:me.y+Math.sin(ang)*140};
-      spawnFx({type:'zone',x:t2.x,y:t2.y,r:92,life:3.2,max:3.2,c:O.c2,owner:me.id,dmg:9*O.dmg*teamPower(),tick:0});
+      spawnFx({type:'zone',x:t2.x,y:t2.y,r:92*pArea(me),life:3.2,max:3.2,c:O.c2,owner:me.id,dmg:9*O.dmg*teamPower()*pDmg(me),tick:0});
       break;
     }
     case 'orbit':
-      me.atkT=2.4;
-      spawnFx({type:'orbit',owner:me.id,life:2.4,max:2.4,c:O.c2,dmg:14*O.dmg*teamPower(),n:3,ph:0,hit:new Set()});
+      me.atkT=2.4*pCd(me);
+      spawnFx({type:'orbit',owner:me.id,life:2.4,max:2.4,c:O.c2,dmg:14*O.dmg*teamPower()*pDmg(me),n:3,ph:0,hit:new Set()});
       break;
   }
 }
@@ -601,7 +637,7 @@ function doChain(me,first,O){
   for(let i=0;i<4&&cur;i++){
     seen.add(cur.id);
     spawnFx({type:'arc',x1:from.x,y1:from.y,x2:cur.x,y2:cur.y,life:0.18,max:0.18,c:O.c2});
-    reportHit(cur.id,18*O.dmg*teamPower(),me.id);
+    reportHit(cur.id,18*O.dmg*teamPower()*pDmg(me),me.id);
     from={x:cur.x,y:cur.y};
     cur=nearestEnemy(cur.x,cur.y,220,seen);
   }
@@ -659,6 +695,79 @@ function tickFx(dt){
 function reportHit(enemyId,dmg,by){
   if(Net.isHost) hostApplyDamage(enemyId,dmg,by);
   else sendHost({t:'hit',id:enemyId,d:Math.round(dmg),by});
+}
+
+/* ---- SHARED LEVEL-UP DRAFT ----
+   The world pauses ONCE for the whole party. Everyone picks their own upgrade
+   at the same time; play resumes when all have chosen, or after a timeout so
+   one AFK friend can't hold the run hostage. */
+const DRAFT_TIMEOUT=20;
+function openDraft(lv){
+  G.paused=true;
+  G.draft={ lv, picked:new Map(), mine:null, t:DRAFT_TIMEOUT };
+  // three options, drawn from a seed shared by the level so it feels fair
+  const r=mulberry32((Net.seed^0xBEEF)+lv*7919);
+  const pool=[...UPGRADES];
+  const choices=[];
+  for(let i=0;i<3 && pool.length;i++) choices.push(pool.splice((r()*pool.length)|0,1)[0]);
+  G.draft.choices=choices;
+  renderDraft();
+  document.getElementById('draft').classList.add('on');
+}
+function renderDraft(){
+  const d=G.draft; if(!d) return;
+  const me=Net.players.get(Net.myId);
+  const O=me?(ORDERS[me.order]||ORDERS.ember):ORDERS.ember;
+  const cards=d.choices.map(u=>{
+    const name = u.id==='art' ? O.artName+' sharpened' : u.name;
+    const on = d.mine===u.id ? ' on' : '';
+    return `<button class="dcard${on}" data-u="${u.id}" style="--dc:${O.c}">
+      <div class="d-nm">${name}</div>
+      <div class="d-ds">${u.desc}</div>
+    </button>`;
+  }).join('');
+  // who is still deciding
+  const waiting=[...Net.players.values()].filter(p=>!d.picked.has(p.id)).map(p=>p.name);
+  document.getElementById('draft').innerHTML=`
+    <div class="d-wrap">
+      <div class="d-h">Level ${d.lv}</div>
+      <div class="d-sub">the whole party grows stronger — choose your own</div>
+      <div class="d-cards">${cards}</div>
+      <div class="d-wait">${d.mine
+        ? (waiting.length ? 'waiting for: '+waiting.join(', ') : 'everyone has chosen…')
+        : 'pick one to continue'} <span class="d-timer">${Math.ceil(d.t)}s</span></div>
+    </div>`;
+  document.querySelectorAll('.dcard').forEach(b=>{
+    b.onclick=()=>{
+      if(G.draft.mine) return;               // one pick each
+      G.draft.mine=b.dataset.u;
+      if(Net.isHost) hostReceivePick(Net.myId,b.dataset.u);
+      else sendHost({t:'pick',id:Net.myId,up:b.dataset.u});
+      renderDraft();
+    };
+  });
+}
+function hostReceivePick(id,upId){
+  if(!G.draft) return;
+  if(G.draft.picked.has(id)) return;
+  G.draft.picked.set(id,upId);
+  renderDraft();
+  // everyone in? resume immediately
+  if(G.draft.picked.size>=Net.players.size) hostCloseDraft();
+}
+function hostCloseDraft(){
+  if(!G.draft) return;
+  const picks=[...G.draft.picked.entries()];
+  // anyone who didn't choose gets a sensible default rather than nothing
+  for(const p of Net.players.values())
+    if(!G.draft.picked.has(p.id)) picks.push([p.id,'dmg']);
+  // NOTE: do NOT apply here. hostEvent() runs applyEvent() locally too, so
+  // applying in both places granted every upgrade twice on the host.
+  hostEvent({t:'ev',k:'resume',picks});
+}
+function closeDraft(){
+  G.draft=null; G.paused=false;
+  document.getElementById('draft').classList.remove('on');
 }
 
 // =====================================================================
@@ -764,25 +873,40 @@ function hostHurtPlayer(p,amount){
     if(!anyAlive) hostEvent({t:'ev',k:'wipe'});
   }
 }
-/* Levelling now grants REAL power, shared by the whole party. Previously the
-   level counter went up and did nothing while enemies kept scaling, so the run
-   quietly became unwinnable. Each level raises everyone's damage and, every
-   third level, their max health — so the team keeps pace with the swarm. */
+/* Levelling is SHARED: everyone levels together, and the world pauses ONCE
+   while each slayer picks their own upgrade. One pause for the party rather
+   than one person's menu freezing everyone else mid-fight. */
 function hostGrantXP(n){
+  if(G.draft) return;              // no XP while the party is choosing
   G.xp+=n;
-  while(G.xp>=G.xpNext){
+  if(G.xp>=G.xpNext){
     G.xp-=G.xpNext; G.lv++; G.xpNext=Math.round(G.xpNext*1.32+3);
-    // heal + toughen everyone a little on level-up (co-op reward, felt by all)
-    const hpUp = (G.lv%3===0) ? 12 : 0;
-    for(const p of Net.players.values()){
-      if(hpUp){ p.maxhp+=hpUp; p.hp=Math.min(p.maxhp,p.hp+hpUp); }
-      else if(p.alive){ p.hp=Math.min(p.maxhp,p.hp+4); }   // a small mercy heal
-    }
-    hostEvent({t:'ev',k:'level',lv:G.lv,hpUp});
+    hostEvent({t:'ev',k:'draft',lv:G.lv});
   }
 }
-// team damage multiplier from shared levels — read by every attack
-function teamPower(){ return 1 + (G.lv-1)*0.07; }
+// team damage multiplier: shared levels, plus any Charge Shrine surge
+function teamPower(){ return (1 + (G.lv-1)*0.07) * (G.teamBuff>0 ? 1.5 : 1); }
+
+/* The upgrade pool. Deliberately small and readable — in a co-op run you want
+   to choose quickly, not read an essay while your friends wait. */
+const UPGRADES=[
+  { id:'art',  name:'Sharpen the Art',  desc:'your signature art strikes harder' },
+  { id:'dmg',  name:"Dragon's Fang",    desc:'+12% damage' },
+  { id:'hp',   name:'Heart of the Wyrm',desc:'+20 max health, healed now' },
+  { id:'spd',  name:'Talon Greaves',    desc:'+8% move speed' },
+  { id:'cd',   name:'Chronoscale',      desc:'strike 10% faster' },
+  { id:'area', name:'Wyrm Sigil',       desc:'+15% reach and area' },
+];
+function applyUpgrade(p,id){
+  if(!p.up) p.up={dmg:0,hp:0,spd:0,cd:0,area:0,art:0};
+  p.up[id]=(p.up[id]||0)+1;
+  if(id==='hp'){ p.maxhp+=20; p.hp=Math.min(p.maxhp,p.hp+20); }
+}
+// per-player multipliers derived from their chosen upgrades
+function pDmg(p){ return (1+(p.up?.dmg||0)*0.12) * (1+(p.up?.art||0)*0.22); }
+function pSpd(p){ return 1+(p.up?.spd||0)*0.08; }
+function pCd(p){ return Math.max(0.35, 1-(p.up?.cd||0)*0.10); }
+function pArea(p){ return 1+(p.up?.area||0)*0.15; }
 function hostEvent(ev){ sendAll(ev); applyEvent(ev); }
 
 // world snapshot — the heart of host-authority
@@ -876,7 +1000,29 @@ function applyEvent(d){
       if(d.hpUp) for(const p of Net.players.values()){ p.maxhp+=d.hpUp; p.hp=Math.min(p.maxhp,p.hp+d.hpUp); }
       banner('LEVEL '+d.lv, d.hpUp ? 'the party grows hardier' : 'your arts bite deeper');
       break;
+    case 'draft':
+      G.lv=d.lv;
+      openDraft(d.lv);
+      break;
+    case 'resume':
+      // the host says everyone has chosen (or time ran out)
+      if(d.picks) for(const [pid,upId] of d.picks){
+        const p=Net.players.get(pid); if(p) applyUpgrade(p,upId);
+      }
+      closeDraft();
+      break;
     case 'say': banner(d.h,d.s); break;
+    case 'buff':
+      G.teamBuff=d.dur;
+      banner('THE PARTY IS CHARGED','every art bites harder');
+      break;
+    case 'fey':
+      G.allies.push({x:d.x,y:d.y,life:22,fireT:0});
+      banner('A FEY DRAGON WAKES','it hunts beside you');
+      break;
+    case 'feyshot':
+      G.fx.push({type:'arc',x1:d.x,y1:d.y,x2:d.tx,y2:d.ty,life:.16,max:.16,c:'#C6E39A'});
+      break;
     case 'victory': G.over=true; showEnd(true); break;
     case 'wipe': G.over=true; showEnd(false); break;
     case 'shrine': banner('A SHRINE AWAKENS','the fallen return'); break;
@@ -922,47 +1068,112 @@ function showEnd(won){
 // =====================================================================
 //  REVIVE SHRINES — a living slayer charges one to bring the fallen back
 // =====================================================================
-const SHRINE_R=110, SHRINE_HOLD=6;
+/* Four shrine types. Benefits are SHARED by the whole party — charging one is a
+   team act, not a personal pickup. The single exception is the Fey Dragon,
+   which summons exactly one ally no matter how many slayers are standing there;
+   five dragons from one shrine would trivialise the fight. */
+const SHRINE_TYPES={
+  revive: { name:'Revive Shrine',    c:'#FFD860', c2:'#FFF6D0', hold:7, tip:'raises every fallen slayer' },
+  charge: { name:'Charge Shrine',    c:'#2C59FA', c2:'#8FB0FF', hold:5, tip:'the party strikes harder' },
+  feydragon:{ name:'Fey Dragon Shrine', c:'#5FBF6F', c2:'#C6E39A', hold:5, tip:'wakes a single dragon ally' },
+  lodestone:{ name:'Lodestone Shrine',  c:'#B58CE6', c2:'#DDBBFF', hold:5, tip:'a surge of shared experience' },
+};
+const SHRINE_KEYS=['revive','charge','feydragon','lodestone'];
+const SHRINE_R=110;
 function seedShrines(){
   // deterministic placement so every client draws them identically
   const r=mulberry32(Net.seed^0x9E3779B9);
   G.shrines=[];
-  for(let i=0;i<14;i++){
+  for(let i=0;i<18;i++){
     const a=r()*6.2832, dist=500+r()*2600;
-    G.shrines.push({id:i,x:Math.cos(a)*dist,y:Math.sin(a)*dist,prog:0,used:false});
+    const kind=SHRINE_KEYS[(r()*SHRINE_KEYS.length)|0];
+    G.shrines.push({id:i,kind,x:Math.cos(a)*dist,y:Math.sin(a)*dist,prog:0,used:false});
   }
 }
 function tickShrines(dt){
-  if(!G.shrines.length && !Net.isHost) return;
-  // ONLY the host advances shrine progress (authoritative), but every client
-  // renders the ring so it feels responsive.
-  if(!Net.isHost) return;
+  if(!Net.isHost) return;   // the host owns shrine progress; clients just render it
   const anyDead=[...Net.players.values()].some(p=>!p.alive);
   for(const s of G.shrines){
     if(s.used) continue;
-    // is a LIVING player standing in it?
+    const T=SHRINE_TYPES[s.kind]||SHRINE_TYPES.revive;
+    // a revive shrine is inert while nobody is down
+    if(s.kind==='revive' && !anyDead){ s.prog=Math.max(0,s.prog-dt/T.hold); continue; }
+    // is a LIVING slayer standing in it? (the dead cannot charge)
     let occupied=false;
     for(const p of Net.players.values()){
       if(p.alive && Math.hypot(p.x-s.x,p.y-s.y)<SHRINE_R){ occupied=true; break; }
     }
-    if(occupied && anyDead){
-      s.prog+=dt/SHRINE_HOLD;
-      if(s.prog>=1){
-        s.prog=1; s.used=true;
-        // REVIVE EVERYONE who is down, right at the shrine
-        for(const p of Net.players.values()){
-          if(p.alive) continue;
-          const O=ORDERS[p.order]||ORDERS.ember;
-          p.alive=true; p.hp=Math.round(O.hp*0.5);
-          p.x=s.x+(Math.random()*40-20); p.y=s.y+(Math.random()*40-20);
-          p.tx=p.x; p.ty=p.y;
-          hostEvent({t:'ev',k:'revived',id:p.id,hp:p.hp,x:Math.round(p.x),y:Math.round(p.y)});
-        }
-      }
-    } else if(s.prog>0 && !occupied){
-      s.prog=Math.max(0,s.prog-dt/SHRINE_HOLD);   // drains rather than resets
+    if(occupied){
+      s.prog+=dt/T.hold;
+      if(s.prog>=1){ s.prog=1; s.used=true; fireShrine(s); }
+    } else if(s.prog>0){
+      s.prog=Math.max(0,s.prog-dt/T.hold);   // drains rather than resets
     }
   }
+}
+// resolve a charged shrine — host only, then announced to everyone
+function fireShrine(s){
+  switch(s.kind){
+    case 'revive': {
+      for(const p of Net.players.values()){
+        if(p.alive) continue;
+        const O=ORDERS[p.order]||ORDERS.ember;
+        p.alive=true; p.hp=Math.round(p.maxhp*0.5);
+        p.x=s.x+(Math.random()*40-20); p.y=s.y+(Math.random()*40-20);
+        p.tx=p.x; p.ty=p.y;
+        hostEvent({t:'ev',k:'revived',id:p.id,hp:p.hp,x:Math.round(p.x),y:Math.round(p.y)});
+      }
+      break;
+    }
+    case 'charge': {
+      // SHARED: the whole party's arts bite harder for a while
+      G.teamBuff=Math.max(G.teamBuff||0,30);
+      hostEvent({t:'ev',k:'buff',dur:30});
+      break;
+    }
+    case 'lodestone': {
+      // SHARED: a burst of experience for everyone at once
+      hostGrantXP(Math.max(6,Math.round(G.xpNext*0.6)));
+      hostEvent({t:'ev',k:'say',h:'THE LODESTONE CALLS',s:'experience floods the party'});
+      break;
+    }
+    case 'feydragon': {
+      // NOT shared-multiplied: exactly one ally, wherever the shrine stands
+      G.allies.push({x:s.x,y:s.y,life:22,fireT:0});
+      hostEvent({t:'ev',k:'fey',x:Math.round(s.x),y:Math.round(s.y)});
+      break;
+    }
+  }
+}
+
+/* Fey dragon allies. One per shrine, no matter how many slayers charged it.
+   It drifts near the party and spits at whatever is closest. Only the host
+   scores its hits; every client renders it from the same shrine event. */
+function tickAllies(dt){
+  for(const a of G.allies){
+    a.life-=dt;
+    let best=null,bd=1e9;
+    for(const p of Net.players.values()){
+      if(!p.alive) continue;
+      const d=Math.hypot(p.x-a.x,p.y-a.y);
+      if(d<bd){bd=d;best=p;}
+    }
+    if(best){
+      const dx=best.x+70-a.x, dy=best.y-50-a.y, d=Math.hypot(dx,dy)||1;
+      if(d>12){ a.x+=(dx/d)*150*dt; a.y+=(dy/d)*150*dt; }
+    }
+    a.fireT-=dt;
+    if(a.fireT<=0 && Net.isHost){
+      const target=nearestEnemy(a.x,a.y,420);
+      if(target){
+        a.fireT=0.8;
+        hostApplyDamage(target.id, 20*teamPower(), Net.myId);
+        hostEvent({t:'ev',k:'feyshot',x:Math.round(a.x),y:Math.round(a.y),
+                   tx:Math.round(target.x),ty:Math.round(target.y)});
+      } else a.fireT=0.3;
+    }
+  }
+  G.allies=G.allies.filter(a=>a.life>0);
 }
 
 // =====================================================================
@@ -1085,33 +1296,75 @@ function drawShrines(){
   const anyDead=[...Net.players.values()].some(p=>!p.alive);
   for(const s of G.shrines){
     if(Math.abs(s.x-G.cam.x)>W/2+200||Math.abs(s.y-G.cam.y)>H/2+200) continue;
-    const active=anyDead&&!s.used;
-    const col=s.used?'#4A4640':(active?'#FFD860':'#7A7568');
-    // ring
-    ctx.strokeStyle=col+(active?'':'88'); ctx.lineWidth=2;
+    const T=SHRINE_TYPES[s.kind]||SHRINE_TYPES.revive;
+    // a revive shrine only matters while someone is down
+    const usable = !s.used && (s.kind!=='revive' || anyDead);
+    const col = s.used ? '#4A4640' : (usable ? T.c2 : '#7A7568');
+    ctx.strokeStyle=col+(usable?'':'88'); ctx.lineWidth=2;
     ctx.beginPath(); ctx.arc(s.x,s.y,SHRINE_R,0,6.2832); ctx.stroke();
-    if(active){
+    if(usable){
       const g=ctx.createRadialGradient(s.x,s.y,SHRINE_R*.4,s.x,s.y,SHRINE_R);
-      g.addColorStop(0,'#FFD86000'); g.addColorStop(1,'#FFD86022');
+      g.addColorStop(0,T.c+'00'); g.addColorStop(1,T.c+'2A');
       ctx.fillStyle=g; ctx.beginPath(); ctx.arc(s.x,s.y,SHRINE_R,0,6.2832); ctx.fill();
     }
-    // altar
+    // plinth
     ctx.fillStyle='#48453F'; ctx.fillRect(s.x-20,s.y+2,40,14);
     ctx.fillStyle='#6E6A62'; ctx.fillRect(s.x-15,s.y-4,30,8);
+    // a distinct silhouette per kind, so you know it from across the field
     if(!s.used){
+      ctx.save(); ctx.translate(s.x,s.y-8);
+      ctx.fillStyle=usable?T.c:'#6E6A62';
+      if(s.kind==='charge'){            // obelisk
+        ctx.beginPath(); ctx.moveTo(-6,6); ctx.lineTo(-4,-26); ctx.lineTo(4,-26); ctx.lineTo(6,6); ctx.closePath(); ctx.fill();
+      } else if(s.kind==='revive'){     // winged altar
+        for(const sg of [-1,1]){ ctx.beginPath(); ctx.moveTo(sg*6,2);
+          ctx.quadraticCurveTo(sg*22,-12,sg*13,-24); ctx.quadraticCurveTo(sg*11,-9,sg*9,2); ctx.closePath(); ctx.fill(); }
+      } else if(s.kind==='feydragon'){  // curled stone dragon
+        ctx.beginPath(); ctx.ellipse(0,-4,13,9,0,0,6.2832); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(5,-8); ctx.lineTo(15,-22); ctx.lineTo(20,-18); ctx.lineTo(11,-4); ctx.closePath(); ctx.fill();
+      } else {                          // lodestone crystal
+        const bob=Math.sin(G.t*2)*3;
+        ctx.beginPath(); ctx.moveTo(0,-24+bob); ctx.lineTo(9,-8+bob); ctx.lineTo(4,6+bob);
+        ctx.lineTo(-4,6+bob); ctx.lineTo(-9,-8+bob); ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      // glow
       const pulse=.5+.5*Math.sin(G.t*2.4);
-      const gg=ctx.createRadialGradient(s.x,s.y-6,0,s.x,s.y-6,14*pulse);
-      gg.addColorStop(0,active?'#FFF6D0':'#B9B3A4'); gg.addColorStop(1,'#FFF6D000');
-      ctx.fillStyle=gg; ctx.beginPath(); ctx.arc(s.x,s.y-6,14*pulse,0,6.2832); ctx.fill();
+      const gg=ctx.createRadialGradient(s.x,s.y-8,0,s.x,s.y-8,16*pulse);
+      gg.addColorStop(0,usable?T.c2:'#B9B3A4'); gg.addColorStop(1,T.c2+'00');
+      ctx.fillStyle=gg; ctx.beginPath(); ctx.arc(s.x,s.y-8,16*pulse,0,6.2832); ctx.fill();
     }
-    // charge progress
     if(s.prog>0&&!s.used){
-      ctx.strokeStyle='#FFD860'; ctx.lineWidth=5;
+      ctx.strokeStyle=T.c2; ctx.lineWidth=5;
       ctx.beginPath(); ctx.arc(s.x,s.y,SHRINE_R+8,-Math.PI/2,-Math.PI/2+s.prog*6.2832); ctx.stroke();
     }
     ctx.font='600 12px Georgia,serif'; ctx.textAlign='center';
     ctx.fillStyle=col;
-    ctx.fillText(s.used?'spent':'Revive Shrine',s.x,s.y-38);
+    ctx.fillText(s.used?'spent':T.name,s.x,s.y-42);
+    if(usable && !s.used){
+      ctx.font='italic 10px Georgia,serif'; ctx.fillStyle=col+'AA';
+      ctx.fillText(T.tip,s.x,s.y-30);
+    }
+  }
+  // fey dragon allies
+  for(const a of G.allies){
+    if(Math.abs(a.x-G.cam.x)>W/2+80||Math.abs(a.y-G.cam.y)>H/2+80) continue;
+    const k=Math.min(1,a.life/2);
+    ctx.globalAlpha=k;
+    const g=ctx.createRadialGradient(a.x,a.y,0,a.x,a.y,34);
+    g.addColorStop(0,'#5FBF6F66'); g.addColorStop(1,'#5FBF6F00');
+    ctx.fillStyle=g; ctx.beginPath(); ctx.arc(a.x,a.y,34,0,6.2832); ctx.fill();
+    const bob=Math.sin(G.t*6)*3;
+    ctx.fillStyle='#5FBF6F';
+    ctx.beginPath(); ctx.ellipse(a.x,a.y+bob,13,9,0,0,6.2832); ctx.fill();
+    ctx.fillStyle='#C6E39A';
+    ctx.beginPath(); ctx.ellipse(a.x+6,a.y-4+bob,6,5,0,0,6.2832); ctx.fill();
+    // wings
+    ctx.fillStyle='#C6E39A';
+    const wf=Math.sin(G.t*12)*5;
+    ctx.beginPath(); ctx.moveTo(a.x-3,a.y+bob); ctx.lineTo(a.x-16,a.y-8-wf+bob); ctx.lineTo(a.x-6,a.y+2+bob); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(a.x+3,a.y+bob); ctx.lineTo(a.x+16,a.y-8-wf+bob); ctx.lineTo(a.x+6,a.y+2+bob); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha=1;
   }
 }
 function drawPlayer(p){
