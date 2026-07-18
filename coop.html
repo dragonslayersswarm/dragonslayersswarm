@@ -124,7 +124,7 @@
 <div id="app">
   <div class="lobby" id="lobby">
     <h1>Dragon Slayers</h1>
-    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 8</span></div>
+    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 9</span></div>
 
     <div class="panel" id="panel-name">
       <h2>Your name</h2>
@@ -236,7 +236,12 @@ const BIOMES=[
   { id:'marsh',    name:'Twilight Marsh',  bg:'#0C0910', grid:'rgba(165,145,205,.05)', tex:'twilight-marsh',  tint:'#1E1A2E' },
 ];
 const BIOME_EVERY=100;                       // seconds per biome
-function biome(){ return BIOMES[Math.floor(G.t/BIOME_EVERY)%BIOMES.length]; }
+function biome(){
+  // defensive: a snapshot from a mismatched build can leave G.t undefined,
+  // which used to index BIOMES[NaN] and crash the whole render loop
+  const t = Number.isFinite(G.t) ? G.t : 0;
+  return BIOMES[Math.floor(t/BIOME_EVERY)%BIOMES.length] || BIOMES[0];
+}
 
 // lazily-loaded ground textures, identical convention to single-player
 const _texCache={};
@@ -278,6 +283,33 @@ function seedRelics(){
       x:Math.cos(a)*dist, y:Math.sin(a)*dist, taken:false, by:null });
   }
 }
+/* Experience gems. Dropped by the slain, drawn to nearby slayers, and worth
+   SHARED xp when collected — so the party levels together even though only one
+   of you actually ran over the gem. */
+const GEM_MAGNET=150;
+function tickGems(dt){
+  for(const g of G.gems){
+    // drift toward the nearest living slayer once they're close enough
+    let best=null,bd=GEM_MAGNET;
+    for(const p of Net.players.values()){
+      if(!p.alive) continue;
+      const d=Math.hypot(p.x-g.x,p.y-g.y);
+      if(d<bd){ bd=d; best=p; }
+    }
+    if(best){
+      const dx=best.x-g.x, dy=best.y-g.y, d=Math.hypot(dx,dy)||1;
+      const pull=520*(1-d/GEM_MAGNET)+120;
+      g.vx+=(dx/d)*pull*dt*6; g.vy+=(dy/d)*pull*dt*6;
+    }
+    g.vx*=Math.pow(0.06,dt); g.vy*=Math.pow(0.06,dt);
+    g.x+=g.vx*dt; g.y+=g.vy*dt;
+    if(Net.isHost && best && Math.hypot(best.x-g.x,best.y-g.y)<WORLD.PLAYER_R+8){
+      g.dead=true; hostGrantXP(g.v);
+    }
+  }
+  G.gems=G.gems.filter(g=>!g.dead);
+}
+
 // host only: first living slayer to touch a relic claims it outright
 function tickRelics(){
   if(!Net.isHost) return;
@@ -297,6 +329,119 @@ function tickRelics(){
 }
 
 const ORDER_KEYS = Object.keys(ORDERS);
+
+/* ====================================================================
+   ABILITY SYSTEM — the real one, ported from single-player.
+   Nine archetypes x nine orders = the same 81 arts, with the same names,
+   damage, cooldowns and scaling. Co-op differs only in WHO applies the
+   damage: every art reports its hits to the host instead of resolving
+   them locally, which is what keeps the world consistent.
+   ==================================================================== */
+const PHYS='physical', MAG='magic';
+const TYPE_LABEL={ [PHYS]:'Physical', [MAG]:'Magic' };
+const ARCH_KEYS = ['bolt','orbit','aura','nova','beam','chain','zone','summon','trail'];
+const DESCS = {
+  bolt:  'Looses seeking shots at the nearest foe.',
+  orbit: 'Wards circle you, grinding whatever they touch.',
+  aura:  'A standing field that wears the swarm down.',
+  nova:  'A ring bursts outward, throwing everything back.',
+  beam:  'A lance of force that pierces an entire rank.',
+  chain: 'Leaps from body to body until it runs out of dead.',
+  zone:  'Salts the ground where the swarm is thickest.',
+  summon:'A bound spirit hunts on its own.',
+  trail: 'Leaves ruin in the ground behind you.',
+};
+
+const ARCH = {
+  bolt:   { icon:'bolt',   base:{ dmg:11, cd:0.85, count:1, speed:430, size:7,  pierce:0, dur:1.6 } },
+  orbit:  { icon:'orbit',  base:{ dmg:9,  cd:0.35, count:2, speed:2.4, size:13, radius:78 } },
+  aura:   { icon:'aura',   base:{ dmg:5,  cd:0.5,  size:96 } },
+  nova:   { icon:'nova',   base:{ dmg:20, cd:2.8,  size:150, speed:520 } },
+  beam:   { icon:'beam',   base:{ dmg:26, cd:2.2,  size:22, dur:0.22, len:620 } },
+  chain:  { icon:'chain',  base:{ dmg:15, cd:1.9,  count:4, size:0, range:190 } },
+  zone:   { icon:'zone',   base:{ dmg:7,  cd:2.6,  size:78, dur:4.0, tick:0.4 } },
+  summon: { icon:'summon', base:{ dmg:13, cd:0.7,  count:1, speed:160, size:11 } },
+  trail:  { icon:'trail',  base:{ dmg:6,  cd:0.14, size:24, dur:2.2, tick:0.35 } },
+};
+
+const ARCH_TYPE = {
+  bolt:  PHYS,   // a thrown object
+  orbit: PHYS,   // solid things, grinding
+  beam:  PHYS,   // a driven lance
+  summon:PHYS,   // claws and teeth
+  aura:  MAG,    // a standing field
+  nova:  MAG,    // released energy
+  chain: MAG,    // it leaps without crossing the gap
+  zone:  MAG,    // cursed ground
+  trail: MAG,    // what you leave behind
+};
+
+const ROLE_TUNE = {
+  'Ravager': { dmg:1.15, cd:0.95, size:1.0 },
+  'Skirmisher': { dmg:0.95, cd:0.80, size:1.15 },
+  'Warden':   { dmg:0.85, cd:1.05, size:1.35 },
+};
+
+const EL_IDENTITY = {
+  fire:      { dmg:1.192, cd:1.00, size:0.95, dur:0.80, count:0 },  // burns hot, burns out
+  water:     { dmg:0.771, cd:1.02, size:1.05, dur:1.40, count:0 },  // lingers
+  nature:    { dmg:0.736, cd:1.05, size:1.08, dur:1.45, count:0 },  // roots — the field kills
+  rock:      { dmg:0.916, cd:1.22, size:1.16, dur:1.00, count:0 },  // heavy, slow, ruinous
+  iron:      { dmg:1.131, cd:0.95, size:0.86, dur:1.00, count:1 },  // +1 count on EVERY art
+  sky:       { dmg:0.703, cd:0.90, size:1.14, dur:1.00, count:0 },  // reaches
+  light:     { dmg:0.894, cd:1.00, size:1.02, dur:1.15, count:0 },  // sustains
+  shadow:    { dmg:1.442, cd:1.18, size:0.85, dur:1.00, count:0 },  // executioner
+  lightning: { dmg:0.818, cd:0.72, size:1.00, dur:0.85, count:0 },  // relentless cadence
+};
+
+const NAMES = {
+  fire:      ['Ember Bolt','Cinder Orbit','Blazing Aura','Flame Nova',"Dragon's Breath",'Wildfire','Magma Pool','Fire Wisp','Scorched Path'],
+  water:     ['Tide Lance','Whirling Current','Chilling Mist','Tsunami Pulse','Pressure Jet','Cascade','Frostpool','Water Elemental','Wake'],
+  nature:    ['Thorn Spike','Circling Vines','Spore Cloud','Bloomburst','Root Lance','Creeping Blight','Bramble Field','Treant Sapling','Overgrowth'],
+  rock:      ['Stone Shard','Orbiting Boulders','Tremor Field','Seismic Slam','Pillar Drive','Rockslide','Crater','Golem Shard','Rubble Trail'],
+  iron:      ['Iron Bolt','Blade Orbit','Shrapnel Aura','Hammerfall','Rail Lance','Ricochet','Caltrop Field','Iron Sentinel','Slag Trail'],
+  sky:       ['Gale Dart','Cyclone Ring','Updraft','Skyburst','Wind Shear','Gust Chain','Tempest Zone','Storm Hawk','Slipstream'],
+  light:     ['Radiant Bolt','Halo','Aura of Dawn','Flashburst','Sunbeam','Refraction','Consecration','Seraph Mote','Lightpath'],
+  shadow:    ['Umbral Dart','Shade Orbit','Dread Aura','Void Collapse','Nightlance','Creeping Dark','Abyssal Pit','Shadowling','Gloom Trail'],
+  lightning: ['Spark Bolt','Arc Ring','Static Field','Discharge','Lightning Lance','Chain Lightning','Storm Cell','Ball Lightning','Ion Trail'],
+};
+
+function buildAbilities(el){
+  const t  = ROLE_TUNE[el.role];
+  const id = EL_IDENTITY[el.id] || { dmg:1, cd:1, size:1, dur:1, count:0 };
+  return ARCH_KEYS.map((k,i)=>{
+    const a = ARCH[k], b = {...a.base};
+    b.dmg = Math.round(b.dmg * t.dmg * id.dmg * 10)/10;
+    b.cd  = Math.round(b.cd  * t.cd  * id.cd  * 100)/100;
+    if(b.size)   b.size   = Math.round(b.size   * t.size * id.size);
+    if(b.radius) b.radius = Math.round(b.radius * t.size * id.size);
+    if(b.dur)    b.dur    = Math.round(b.dur * id.dur * 100)/100;
+    if(b.count)  b.count  = Math.max(1, b.count + id.count);
+    return { id:`${el.id}_${k}`, arch:k, icon:a.icon, name:NAMES[el.id][i], desc:DESCS[k], base:b, el:el.id };
+  });
+}
+
+// each co-op order maps to a single-player element for ability generation
+const ORDER_EL = { ember:'fire', tide:'water', thorn:'nature', stone:'rock',
+                   forge:'iron', gale:'sky', dawn:'light', umbral:'shadow', storm:'lightning' };
+// build the nine arts for an order, exactly as single-player does
+function orderArts(orderKey){
+  const O = ORDERS[orderKey] || ORDERS.ember;
+  return buildAbilities({ id: ORDER_EL[orderKey] || 'fire', role: O.role, c:O.c, c2:O.c2 });
+}
+// rank scaling for a chosen art, matching single-player's growth
+function A(a, key){
+  const b = a.def.base[key];
+  if(b === undefined) return 0;
+  const lv = a.lv - 1;
+  if(key === 'dmg')   return b * (1 + lv*0.22);
+  if(key === 'cd')    return b * Math.pow(0.92, lv);
+  if(key === 'count') return b + Math.floor(lv/2);
+  if(key === 'size' || key === 'radius') return b * (1 + lv*0.10);
+  if(key === 'dur')   return b * (1 + lv*0.10);
+  return b;
+}
+
 
 /* ====================================================================
    SPRITES — ported verbatim from the single-player game so co-op looks
@@ -996,6 +1141,7 @@ const G={
   spectateIdx:0, banner:null, over:false,
   teamBuff:0,        // seconds of Charge Shrine damage surge (party-wide)
   allies:[],         // fey dragons summoned by shrines
+  gems:[],           // experience dropped by the slain, collected on the ground
   relics:[],         // buried Wyrmhoard relics — first finder keeps them
   draft:null,        // shared level-up: {choices, picked:Set} — pauses everyone
   paused:false,
@@ -1016,6 +1162,9 @@ function beginGame(){
     p.x=Math.cos(a)*70; p.y=Math.sin(a)*70; p.tx=p.x; p.ty=p.y;
     const O=ORDERS[p.order]||ORDERS.ember;
     p.hp=O.hp; p.maxhp=O.hp; p.alive=true;
+    // you begin sworn to a single art and draft more as you level, as in solo
+    p.pool = orderArts(p.order);
+    p.arts = [{ def:p.pool[0], lv:1, t:0 }];
   });
   const me=Net.players.get(Net.myId);
   if(me){ G.cam.x=me.x; G.cam.y=me.y; }
@@ -1116,6 +1265,7 @@ function update(dt,now){
   tickBullets(dt);
   tickFx(dt);
   tickShrines(dt);
+  tickGems(dt);
   tickRelics();
   // relic regen — a slow trickle back for whoever found the Tide Pearl
   for(const p of Net.players.values())
@@ -1142,51 +1292,75 @@ function update(dt,now){
 }
 
 // ---- attacks -------------------------------------------------------
+/* ---- ARTS. The real nine archetypes from single-player, fired locally for
+   responsiveness but resolving damage through the host. Each player carries
+   their own chosen arts and ranks, exactly as in the solo game. ---- */
 function tickMyAttack(dt){
-  const me=Net.players.get(Net.myId); const O=ORDERS[me.order]||ORDERS.ember;
-  me.atkT-=dt;
-  if(me.atkT>0) return;
-  const target=nearestEnemy(me.x,me.y,560);
-  const ang = target ? Math.atan2(target.y-me.y,target.x-me.x) : (me.face>=0?0:Math.PI);
-  me.aim=ang;
-  broadcastAttack(O.art,ang);   // so teammates see my art, not silence
-  switch(O.art){
-    case 'bolt':
-      me.atkT=0.62*pCd(me);
-      spawnBullet(me.id,me.x,me.y,Math.cos(ang)*560,Math.sin(ang)*560,10,22*O.dmg*teamPower()*pDmg(me),O.c,O.c2,2);
-      break;
-    case 'chain':
-      me.atkT=0.85*pCd(me);
-      if(target) doChain(me,target,O);
-      break;
-    case 'nova':
-      me.atkT=1.5*pCd(me);
-      spawnFx({type:'nova',x:me.x,y:me.y,r:8,max:150*pArea(me),c:O.c2,owner:me.id,dmg:26*O.dmg*teamPower()*pDmg(me),hit:new Set()});
-      break;
-    case 'aura':
-      me.atkT=0.5*pCd(me);
-      spawnFx({type:'aura',x:me.x,y:me.y,r:105*pArea(me),life:0.45,max:0.45,c:O.c2,owner:me.id,dmg:11*O.dmg*teamPower()*pDmg(me),hit:new Set()});
-      break;
-    case 'zone': {
-      me.atkT=1.9*pCd(me);
-      const t2=target||{x:me.x+Math.cos(ang)*140,y:me.y+Math.sin(ang)*140};
-      spawnFx({type:'zone',x:t2.x,y:t2.y,r:92*pArea(me),life:3.2,max:3.2,c:O.c2,owner:me.id,dmg:9*O.dmg*teamPower()*pDmg(me),tick:0});
-      break;
+  const me=Net.players.get(Net.myId); if(!me||!me.arts) return;
+  const O=ORDERS[me.order]||ORDERS.ember;
+  const areaM=pArea(me), dmgM=teamPower()*pDmg(me), cdM=pCd(me);
+  for(const a of me.arts){
+    a.t=(a.t||0)-dt;
+    if(a.t>0) continue;
+    const arch=a.def.arch, C=O.c, C2=O.c2;
+    const dmg=A(a,'dmg')*dmgM, cd=A(a,'cd')*cdM;
+    const size=A(a,'size')*areaM, count=A(a,'count')||1;
+    a.t=cd;
+    const target=nearestEnemy(me.x,me.y,620);
+    const ang=target?Math.atan2(target.y-me.y,target.x-me.x):(me.face>=0?0:Math.PI);
+    broadcastAttack(arch,ang);
+    switch(arch){
+      case 'bolt': {
+        for(let i=0;i<count;i++){
+          const sp=A(a,'speed')||430, spread=(i-(count-1)/2)*0.16;
+          spawnBullet(me.id,me.x,me.y,Math.cos(ang+spread)*sp,Math.sin(ang+spread)*sp,
+                      Math.max(5,size),dmg,C,C2,(A(a,'pierce')||0)+1);
+        }
+        break;
+      }
+      case 'orbit':
+        spawnFx({type:'orbit',owner:me.id,life:A(a,'dur')||2.4,max:A(a,'dur')||2.4,
+                 c:C2,dmg,n:count,ph:0,rad:Math.max(45,size*7),hit:new Set()});
+        break;
+      case 'aura':
+        spawnFx({type:'aura',x:me.x,y:me.y,r:Math.max(70,size*6),life:0.4,max:0.4,
+                 c:C2,owner:me.id,dmg,hit:new Set()});
+        break;
+      case 'nova':
+        spawnFx({type:'nova',x:me.x,y:me.y,r:8,max:Math.max(120,size*9),
+                 c:C2,owner:me.id,dmg,hit:new Set()});
+        break;
+      case 'beam': {
+        const len=Math.max(320,size*22);
+        spawnFx({type:'beam',x:me.x,y:me.y,ang,len,life:0.22,max:0.22,c:C2,owner:me.id,dmg,hit:new Set()});
+        break;
+      }
+      case 'chain': if(target) doChain(me,target,dmg,C2,count+2); break;
+      case 'zone': {
+        const t2=target||{x:me.x+Math.cos(ang)*160,y:me.y+Math.sin(ang)*160};
+        spawnFx({type:'zone',x:t2.x,y:t2.y,r:Math.max(60,size*5),life:A(a,'dur')||3,
+                 max:A(a,'dur')||3,c:C2,owner:me.id,dmg,tick:0});
+        break;
+      }
+      case 'summon':
+        spawnFx({type:'wisp',owner:me.id,x:me.x,y:me.y,life:A(a,'dur')||6,max:A(a,'dur')||6,
+                 c:C2,dmg,fireT:0});
+        break;
+      case 'trail':
+        spawnFx({type:'zone',x:me.x,y:me.y,r:Math.max(34,size*3),life:A(a,'dur')||2,
+                 max:A(a,'dur')||2,c:C2,owner:me.id,dmg,tick:0});
+        break;
     }
-    case 'orbit':
-      me.atkT=2.4*pCd(me);
-      spawnFx({type:'orbit',owner:me.id,life:2.4,max:2.4,c:O.c2,dmg:14*O.dmg*teamPower()*pDmg(me),n:3,ph:0,hit:new Set()});
-      break;
   }
 }
-function doChain(me,first,O){
+function doChain(me,first,dmg,col,jumps){
   let cur=first; const seen=new Set(); let from={x:me.x,y:me.y};
-  for(let i=0;i<4&&cur;i++){
+  for(let i=0;i<jumps&&cur;i++){
     seen.add(cur.id);
-    spawnFx({type:'arc',x1:from.x,y1:from.y,x2:cur.x,y2:cur.y,life:0.18,max:0.18,c:O.c2});
-    reportHit(cur.id,18*O.dmg*teamPower()*pDmg(me),me.id);
+    spawnFx({type:'arc',x1:from.x,y1:from.y,x2:cur.x,y2:cur.y,life:0.18,max:0.18,c:col});
+    reportHit(cur.id,dmg,me.id);
     from={x:cur.x,y:cur.y};
-    cur=nearestEnemy(cur.x,cur.y,220,seen);
+    cur=nearestEnemy(cur.x,cur.y,240,seen);
   }
 }
 function spawnBullet(owner,x,y,vx,vy,r,dmg,c,c2,pierce){
@@ -1217,15 +1391,37 @@ function tickFx(dt){
     if(f.type==='orbit'){ f.ph+=dt*4.2; const o=Net.players.get(f.owner); if(o){ f.x=o.x; f.y=o.y; } }
     if(f.type==='aura'){ const o=Net.players.get(f.owner); if(o){ f.x=o.x; f.y=o.y; } }
     if(f.type==='zone'){ f.tick-=dt; }
+    if(f.type==='beam'){ const o=Net.players.get(f.owner); if(o){ f.x=o.x; f.y=o.y; } }
+    if(f.type==='wisp'){
+      // a bound spirit that hunts on its own
+      const o=Net.players.get(f.owner);
+      if(o){ const dx=o.x+50-f.x, dy=o.y-40-f.y, d=Math.hypot(dx,dy)||1;
+             if(d>10){ f.x+=(dx/d)*170*dt; f.y+=(dy/d)*170*dt; } }
+      f.fireT-=dt;
+      if(f.fireT<=0 && f.owner===Net.myId){
+        const tg=nearestEnemy(f.x,f.y,340);
+        if(tg){ f.fireT=0.7; reportHit(tg.id,f.dmg,f.owner);
+          G.fx.push({type:'arc',x1:f.x,y1:f.y,x2:tg.x,y2:tg.y,life:.14,max:.14,c:f.c}); }
+        else f.fireT=0.25;
+      }
+    }
     // only the owner reports damage; host applies it
     if(f.owner===Net.myId && f.dmg){
       if(f.type==='nova'||f.type==='aura'||f.type==='orbit'){
-        const rr = f.type==='orbit' ? 62 : f.r;
+        const rr = f.type==='orbit' ? (f.rad||62) : f.r;
         for(const e of G.enemies){
           if(!e.alive||(f.hit&&f.hit.has(e.id))) continue;
           const d=Math.hypot(e.x-f.x,e.y-f.y);
           const inRange = f.type==='orbit' ? Math.abs(d-rr)<26 : d<rr+e.r;
           if(inRange){ if(f.hit) f.hit.add(e.id); reportHit(e.id,f.dmg,f.owner); }
+        }
+      } else if(f.type==='beam'){
+        for(const e of G.enemies){
+          if(!e.alive||f.hit.has(e.id)) continue;
+          const rx=e.x-f.x, ry=e.y-f.y;
+          const along=rx*Math.cos(f.ang)+ry*Math.sin(f.ang);
+          const perp =Math.abs(-rx*Math.sin(f.ang)+ry*Math.cos(f.ang));
+          if(along>0 && along<f.len && perp<e.r+16){ f.hit.add(e.id); reportHit(e.id,f.dmg,f.owner); }
         }
       } else if(f.type==='zone' && f.tick<=0){
         f.tick=0.45;
@@ -1251,48 +1447,68 @@ function reportHit(enemyId,dmg,by){
 const DRAFT_TIMEOUT=20;
 function openDraft(lv){
   G.paused=true;
-  G.draft={ lv, picked:new Map(), mine:null, t:DRAFT_TIMEOUT };
-  // three options, drawn from a seed shared by the level so it feels fair
-  const r=mulberry32((Net.seed^0xBEEF)+lv*7919);
-  const pool=[...UPGRADES];
-  const choices=[];
-  for(let i=0;i<3 && pool.length;i++) choices.push(pool.splice((r()*pool.length)|0,1)[0]);
-  G.draft.choices=choices;
+  const me=Net.players.get(Net.myId);
+  // three offers drawn from YOUR order's nine arts: rank up what you carry,
+  // or swear a new one — the same choice the solo game gives you
+  const offers=[];
+  if(me && me.pool){
+    const owned=new Map((me.arts||[]).map(a=>[a.def.id,a]));
+    const cands=[];
+    for(const def of me.pool){
+      const have=owned.get(def.id);
+      if(have){ if(have.lv<5) cands.push({def,lv:have.lv+1,isNew:false}); }
+      else if((me.arts||[]).length<5) cands.push({def,lv:1,isNew:true});
+    }
+    const r=mulberry32((Net.seed^0xA11CE)+lv*104729+hashId(Net.myId));
+    while(offers.length<3 && cands.length) offers.push(cands.splice((r()*cands.length)|0,1)[0]);
+  }
+  G.draft={ lv, picked:new Map(), mine:null, t:DRAFT_TIMEOUT, offers };
   renderDraft();
   document.getElementById('draft').classList.add('on');
 }
+function hashId(s){ let h=0; for(let i=0;i<String(s).length;i++) h=(h*31+String(s).charCodeAt(i))|0; return h>>>0; }
 function renderDraft(){
   const d=G.draft; if(!d) return;
   const me=Net.players.get(Net.myId);
   const O=me?(ORDERS[me.order]||ORDERS.ember):ORDERS.ember;
-  const cards=d.choices.map(u=>{
-    const name = u.id==='art' ? O.artName+' sharpened' : u.name;
-    const on = d.mine===u.id ? ' on' : '';
-    return `<button class="dcard${on}" data-u="${u.id}" style="--dc:${O.c}">
-      <div class="d-nm">${name}</div>
-      <div class="d-ds">${u.desc}</div>
+  const cards=(d.offers||[]).map((o,i)=>{
+    const on=d.mine===String(i)?' on':'';
+    return `<button class="dcard${on}" data-u="${i}" style="--dc:${O.c}">
+      <div class="d-tag" style="color:${O.c}">${o.isNew?'NEW ART':'RANK '+o.lv}</div>
+      <div class="d-nm">${o.def.name}</div>
+      <div class="d-ds">${o.def.desc}</div>
+      <div class="d-st">${Math.round(A({def:o.def,lv:o.lv},'dmg'))} dmg · ${A({def:o.def,lv:o.lv},'cd').toFixed(2)}s</div>
     </button>`;
-  }).join('');
-  // who is still deciding
+  }).join('') || '<div class="d-ds">your arts are fully sworn</div>';
   const waiting=[...Net.players.values()].filter(p=>!d.picked.has(p.id)).map(p=>p.name);
   document.getElementById('draft').innerHTML=`
     <div class="d-wrap">
       <div class="d-h">Level ${d.lv}</div>
-      <div class="d-sub">the whole party grows stronger — choose your own</div>
+      <div class="d-sub">the whole party rises — choose your own art</div>
       <div class="d-cards">${cards}</div>
-      <div class="d-wait">${d.mine
+      <div class="d-wait">${d.mine!==null&&d.mine!==undefined
         ? (waiting.length ? 'waiting for: '+waiting.join(', ') : 'everyone has chosen…')
         : 'pick one to continue'} <span class="d-timer">${Math.ceil(d.t)}s</span></div>
     </div>`;
   document.querySelectorAll('.dcard').forEach(b=>{
     b.onclick=()=>{
-      if(G.draft.mine) return;               // one pick each
+      if(G.draft.mine!==null&&G.draft.mine!==undefined) return;
       G.draft.mine=b.dataset.u;
+      applyArtPick(Net.myId, G.draft.offers[+b.dataset.u]);
       if(Net.isHost) hostReceivePick(Net.myId,b.dataset.u);
       else sendHost({t:'pick',id:Net.myId,up:b.dataset.u});
       renderDraft();
     };
   });
+}
+// arts are chosen and applied LOCALLY (each player owns their own build);
+// only the "I have chosen" signal needs to cross the wire
+function applyArtPick(pid,offer){
+  const p=Net.players.get(pid); if(!p||!offer) return;
+  if(!p.arts) p.arts=[];
+  const have=p.arts.find(a=>a.def.id===offer.def.id);
+  if(have) have.lv=offer.lv;
+  else p.arts.push({def:offer.def,lv:1,t:0});
 }
 function hostReceivePick(id,upId){
   if(!G.draft) return;
@@ -1304,13 +1520,7 @@ function hostReceivePick(id,upId){
 }
 function hostCloseDraft(){
   if(!G.draft) return;
-  const picks=[...G.draft.picked.entries()];
-  // anyone who didn't choose gets a sensible default rather than nothing
-  for(const p of Net.players.values())
-    if(!G.draft.picked.has(p.id)) picks.push([p.id,'dmg']);
-  // NOTE: do NOT apply here. hostEvent() runs applyEvent() locally too, so
-  // applying in both places granted every upgrade twice on the host.
-  hostEvent({t:'ev',k:'resume',picks});
+  hostEvent({t:'ev',k:'resume'});
 }
 function closeDraft(){
   G.draft=null; G.paused=false;
@@ -1398,8 +1608,8 @@ function hostApplyDamage(enemyId,dmg,by){
     e.alive=false;
     const killer=Net.players.get(by);
     if(killer) killer.kills=(killer.kills||0)+1;
-    // XP is SHARED — everyone levels together, so nobody falls behind
-    hostGrantXP(e.xp);
+    // the slain drop their experience on the ground — someone has to go get it
+    G.gems.push({ id:G.nextId++, x:e.x, y:e.y, v:e.xp, vx:(Math.random()-0.5)*70, vy:(Math.random()-0.5)*70 });
     // NOTE: no network event for the death. It was 21% of all traffic for a
     // purely cosmetic puff of particles — clients now spawn that themselves
     // when an enemy vanishes from their snapshot. Identical to look at.
@@ -1484,6 +1694,7 @@ function hostSnapshot(now){
         e:near.slice(0,140).map(e=>[e.id,Math.round(e.x),Math.round(e.y),e.kind[0],Math.round(e.hp)]),
         p:players, s:shrines,
         r:G.relics.filter(r=>r.taken).map(r=>r.id),
+        g:G.gems.slice(0,90).map(g=>[g.id,Math.round(g.x),Math.round(g.y),g.v]),
         xp:G.xp, lv:G.lv, xn:G.xpNext, gt:Math.round(G.t),
       });
     }catch(err){}
@@ -1517,7 +1728,22 @@ function applySnapshot(d){
     const p=Net.players.get(id);
     if(p){ p.hp=hp; p.alive=!!alive; p.kills=kills; }
   }
-  G.xp=d.xp; G.lv=d.lv; G.xpNext=d.xn; G.t=d.gt;
+  // guard every field: one malformed packet used to poison G.t and crash render
+  if(Number.isFinite(d.xp)) G.xp=d.xp;
+  if(Number.isFinite(d.lv)) G.lv=d.lv;
+  if(Number.isFinite(d.xn)) G.xpNext=d.xn;
+  if(Number.isFinite(d.gt)) G.t=d.gt;
+  // gems: mirror the host's list so everyone sees the same experience on the floor
+  if(d.g){
+    const seenG=new Set();
+    for(const [id,x,y,v] of d.g){
+      seenG.add(id);
+      let g=G.gems.find(q=>q.id===id);
+      if(!g) G.gems.push({id,x,y,v,vx:0,vy:0});
+      else { g.x=x; g.y=y; }
+    }
+    G.gems=G.gems.filter(g=>seenG.has(g.id));
+  }
   for(const rid of (d.r||[])){ const rel=G.relics.find(q=>q.id===rid); if(rel) rel.taken=true; }
   for(const [id,prog,used] of (d.s||[])){
     const s=G.shrines.find(q=>q.id===id);
@@ -1553,13 +1779,7 @@ function applyEvent(d){
       G.lv=d.lv;
       openDraft(d.lv);
       break;
-    case 'resume':
-      // the host says everyone has chosen (or time ran out)
-      if(d.picks) for(const [pid,upId] of d.picks){
-        const p=Net.players.get(pid); if(p) applyUpgrade(p,upId);
-      }
-      closeDraft();
-      break;
+    case 'resume': closeDraft(); break;
     case 'relic': {
       const rel=G.relics.find(r=>r.id===d.rid);
       if(rel){ rel.taken=true; rel.by=d.who; }
@@ -1823,6 +2043,20 @@ function render(){
         ctx.fillStyle=f.c;
         ctx.beginPath(); ctx.arc(f.x+Math.cos(a)*62,f.y+Math.sin(a)*62,6,0,6.2832); ctx.fill();
       }
+    } else if(f.type==='beam'){
+      ctx.save(); ctx.globalAlpha=k;
+      ctx.strokeStyle=f.c; ctx.lineWidth=14*k+3; ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(f.x,f.y);
+      ctx.lineTo(f.x+Math.cos(f.ang)*f.len, f.y+Math.sin(f.ang)*f.len); ctx.stroke();
+      ctx.strokeStyle='#ffffff'; ctx.lineWidth=4*k;
+      ctx.beginPath(); ctx.moveTo(f.x,f.y);
+      ctx.lineTo(f.x+Math.cos(f.ang)*f.len, f.y+Math.sin(f.ang)*f.len); ctx.stroke();
+      ctx.restore();
+    } else if(f.type==='wisp'){
+      const g2=ctx.createRadialGradient(f.x,f.y,0,f.x,f.y,16);
+      g2.addColorStop(0,f.c); g2.addColorStop(1,f.c+'00');
+      ctx.fillStyle=g2; ctx.beginPath(); ctx.arc(f.x,f.y,16,0,6.2832); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(f.x,f.y,3,0,6.2832); ctx.fill();
     } else if(f.type==='arc'){
       ctx.strokeStyle=f.c; ctx.globalAlpha=k; ctx.lineWidth=3;
       ctx.beginPath(); ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke(); ctx.globalAlpha=1;
@@ -1938,6 +2172,14 @@ function drawShrines(){
       ctx.font='italic 10px Georgia,serif'; ctx.fillStyle=col+'AA';
       ctx.fillText(T.tip,s.x,s.y-30);
     }
+  }
+  // experience gems on the ground
+  for(const g of G.gems){
+    if(Math.abs(g.x-G.cam.x)>W/2+40||Math.abs(g.y-G.cam.y)>H/2+40) continue;
+    ctx.save(); ctx.translate(g.x,g.y); ctx.rotate(G.t*2);
+    ctx.fillStyle='#7FE0FF'; ctx.fillRect(-3,-3,6,6);
+    ctx.fillStyle='#D6FBFF'; ctx.fillRect(-1.5,-1.5,3,3);
+    ctx.restore();
   }
   // buried relics — a glint worth crossing the map for. Claimed ones vanish.
   for(const rel of G.relics){
