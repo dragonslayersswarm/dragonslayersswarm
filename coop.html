@@ -82,6 +82,24 @@
   #spectate .sp-w{color:var(--parchment);font-size:.9rem;margin-top:.2rem}
   #spectate .sp-k{color:var(--bone);font-size:.6rem;margin-top:.35rem}
   #leave{position:fixed;bottom:10px;right:10px;z-index:5}
+  /* end-of-run summary */
+  #endscreen{position:fixed;inset:0;z-index:40;display:none;place-items:center;
+    background:rgba(8,6,10,.94);backdrop-filter:blur(4px);overflow-y:auto}
+  #endscreen.on{display:grid}
+  .e-wrap{text-align:center;padding:2rem 1rem;width:min(560px,94vw)}
+  .e-wrap h1{font-family:var(--display);font-size:clamp(1.5rem,5vw,2.4rem);letter-spacing:.08em}
+  .e-sub{font-family:var(--body);font-style:italic;color:var(--bone);margin:.4rem 0 1.6rem}
+  .e-stats{display:flex;gap:2rem;justify-content:center;margin-bottom:1.6rem}
+  .e-stats div{font-family:var(--mono);font-size:.56rem;letter-spacing:.2em;color:var(--bone);display:flex;flex-direction:column;gap:.3rem}
+  .e-stats b{font-family:var(--display);font-size:1.5rem;color:var(--parchment);letter-spacing:0}
+  .e-roster{border-top:1px solid rgba(232,220,192,.14);padding-top:1rem;margin-bottom:1.6rem}
+  .e-row{display:grid;grid-template-columns:24px 1fr auto auto auto;gap:.7rem;align-items:baseline;
+    padding:.5rem 0;border-bottom:1px solid rgba(232,220,192,.06);font-family:var(--mono);font-size:.7rem;text-align:left}
+  .e-rank{color:var(--gold)}
+  .e-nm{font-family:var(--display);font-size:.9rem}
+  .e-or{color:var(--bone);font-size:.6rem;letter-spacing:.1em;text-transform:uppercase}
+  .e-k{color:var(--parchment)}
+  .e-st{color:var(--bone);font-size:.6rem;text-transform:uppercase;letter-spacing:.1em}
   .help{position:fixed;bottom:10px;left:10px;font-family:var(--mono);font-size:.58rem;color:var(--bone)}
 </style>
 </head>
@@ -89,7 +107,7 @@
 <div id="app">
   <div class="lobby" id="lobby">
     <h1>Dragon Slayers</h1>
-    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 3</span></div>
+    <div class="sub">Co-operative Hunt <span style="opacity:.5">· build 5</span></div>
 
     <div class="panel" id="panel-name">
       <h2>Your name</h2>
@@ -157,10 +175,10 @@
 
 const WORLD = {
   SEND_HZ: 20,            // player position broadcasts / sec
-  SNAP_HZ: 15,            // host world snapshots / sec
+  SNAP_HZ: 10,            // host world snapshots / sec
   PLAYER_R: 15,
   MOVE: 300,
-  MAX_ENEMIES: 220,       // lower than single-player: this all crosses the wire
+  MAX_ENEMIES: 110,       // lower than single-player: this all crosses the wire
   RUN_LENGTH: 600,
 };
 const PLAYER_COLORS = ['#C9A227','#5FBF6F','#B48CE6','#E0663D','#3FA9A0','#FF8C3A'];
@@ -523,10 +541,18 @@ function update(dt,now){
   tickShrines(dt);
 
   // --- HOST ONLY: the authoritative world simulation ---
-  if(Net.isHost){
+  if(Net.isHost && !G.over){
     hostSpawn(dt);
     hostMoveEnemies(dt);
     hostSnapshot(now);
+    // VICTORY: hold out to the tenth minute with anyone still standing
+    if(G.t>=WORLD.RUN_LENGTH){
+      G.over=true;
+      hostEvent({t:'ev',k:'victory',lv:G.lv,kills:G.kills,gt:Math.round(G.t)});
+    }
+    // one-time warnings so the finish line is felt
+    if(!G._warn5 && G.t>=WORLD.RUN_LENGTH-300){ G._warn5=true; hostEvent({t:'ev',k:'say',h:'HALFWAY',s:'five minutes remain'}); }
+    if(!G._warn1 && G.t>=WORLD.RUN_LENGTH-60){ G._warn1=true; hostEvent({t:'ev',k:'say',h:'ONE MINUTE',s:'hold together'}); }
   }
   sendPosition(now);
   updateHUD();
@@ -544,7 +570,7 @@ function tickMyAttack(dt){
   switch(O.art){
     case 'bolt':
       me.atkT=0.62;
-      spawnBullet(me.id,me.x,me.y,Math.cos(ang)*560,Math.sin(ang)*560,10,22*O.dmg,O.c,O.c2,2);
+      spawnBullet(me.id,me.x,me.y,Math.cos(ang)*560,Math.sin(ang)*560,10,22*O.dmg*teamPower(),O.c,O.c2,2);
       break;
     case 'chain':
       me.atkT=0.85;
@@ -552,21 +578,21 @@ function tickMyAttack(dt){
       break;
     case 'nova':
       me.atkT=1.5;
-      spawnFx({type:'nova',x:me.x,y:me.y,r:8,max:150,c:O.c2,owner:me.id,dmg:26*O.dmg,hit:new Set()});
+      spawnFx({type:'nova',x:me.x,y:me.y,r:8,max:150,c:O.c2,owner:me.id,dmg:26*O.dmg*teamPower(),hit:new Set()});
       break;
     case 'aura':
       me.atkT=0.5;
-      spawnFx({type:'aura',x:me.x,y:me.y,r:105,life:0.45,max:0.45,c:O.c2,owner:me.id,dmg:11*O.dmg,hit:new Set()});
+      spawnFx({type:'aura',x:me.x,y:me.y,r:105,life:0.45,max:0.45,c:O.c2,owner:me.id,dmg:11*O.dmg*teamPower(),hit:new Set()});
       break;
     case 'zone': {
       me.atkT=1.9;
       const t2=target||{x:me.x+Math.cos(ang)*140,y:me.y+Math.sin(ang)*140};
-      spawnFx({type:'zone',x:t2.x,y:t2.y,r:92,life:3.2,max:3.2,c:O.c2,owner:me.id,dmg:9*O.dmg,tick:0});
+      spawnFx({type:'zone',x:t2.x,y:t2.y,r:92,life:3.2,max:3.2,c:O.c2,owner:me.id,dmg:9*O.dmg*teamPower(),tick:0});
       break;
     }
     case 'orbit':
       me.atkT=2.4;
-      spawnFx({type:'orbit',owner:me.id,life:2.4,max:2.4,c:O.c2,dmg:14*O.dmg,n:3,ph:0,hit:new Set()});
+      spawnFx({type:'orbit',owner:me.id,life:2.4,max:2.4,c:O.c2,dmg:14*O.dmg*teamPower(),n:3,ph:0,hit:new Set()});
       break;
   }
 }
@@ -575,7 +601,7 @@ function doChain(me,first,O){
   for(let i=0;i<4&&cur;i++){
     seen.add(cur.id);
     spawnFx({type:'arc',x1:from.x,y1:from.y,x2:cur.x,y2:cur.y,life:0.18,max:0.18,c:O.c2});
-    reportHit(cur.id,18*O.dmg,me.id);
+    reportHit(cur.id,18*O.dmg*teamPower(),me.id);
     from={x:cur.x,y:cur.y};
     cur=nearestEnemy(cur.x,cur.y,220,seen);
   }
@@ -718,13 +744,18 @@ function hostApplyDamage(enemyId,dmg,by){
     if(killer) killer.kills=(killer.kills||0)+1;
     // XP is SHARED — everyone levels together, so nobody falls behind
     hostGrantXP(e.xp);
-    hostEvent({t:'ev',k:'kill',x:Math.round(e.x),y:Math.round(e.y),c:ENEMY_KINDS[e.kind].c2});
+    // NOTE: no network event for the death. It was 21% of all traffic for a
+    // purely cosmetic puff of particles — clients now spawn that themselves
+    // when an enemy vanishes from their snapshot. Identical to look at.
+    deathPuff(e.x,e.y,ENEMY_KINDS[e.kind].c2);
+    G.kills++;
   }
 }
 function hostHurtPlayer(p,amount){
   if(!p.alive) return;
   p.hp-=amount;
-  hostEvent({t:'ev',k:'hurt',id:p.id,hp:Math.round(p.hp)});
+  // no 'hurt' event: player health already travels in every snapshot, and this
+  // fired constantly (26% of all traffic) for information nobody consumed
   if(p.hp<=0){
     p.hp=0; p.alive=false;
     hostEvent({t:'ev',k:'died',id:p.id,name:p.name});
@@ -733,29 +764,58 @@ function hostHurtPlayer(p,amount){
     if(!anyAlive) hostEvent({t:'ev',k:'wipe'});
   }
 }
+/* Levelling now grants REAL power, shared by the whole party. Previously the
+   level counter went up and did nothing while enemies kept scaling, so the run
+   quietly became unwinnable. Each level raises everyone's damage and, every
+   third level, their max health — so the team keeps pace with the swarm. */
 function hostGrantXP(n){
   G.xp+=n;
   while(G.xp>=G.xpNext){
     G.xp-=G.xpNext; G.lv++; G.xpNext=Math.round(G.xpNext*1.32+3);
-    hostEvent({t:'ev',k:'level',lv:G.lv});
+    // heal + toughen everyone a little on level-up (co-op reward, felt by all)
+    const hpUp = (G.lv%3===0) ? 12 : 0;
+    for(const p of Net.players.values()){
+      if(hpUp){ p.maxhp+=hpUp; p.hp=Math.min(p.maxhp,p.hp+hpUp); }
+      else if(p.alive){ p.hp=Math.min(p.maxhp,p.hp+4); }   // a small mercy heal
+    }
+    hostEvent({t:'ev',k:'level',lv:G.lv,hpUp});
   }
 }
+// team damage multiplier from shared levels — read by every attack
+function teamPower(){ return 1 + (G.lv-1)*0.07; }
 function hostEvent(ev){ sendAll(ev); applyEvent(ev); }
 
 // world snapshot — the heart of host-authority
+/* World snapshot — the heart of host-authority.
+   Sent PER PEER, containing only the enemies near that player. Broadcasting
+   every enemy to everyone cost ~177 KB/s upload with five players, which a
+   typical home connection cannot sustain; culling per recipient cuts that
+   dramatically because players are usually spread out. */
+const SNAP_RANGE = 1100;          // only sync enemies this close to a player
 let lastSnap=0;
 function hostSnapshot(now){
   if(now-lastSnap<1000/WORLD.SNAP_HZ) return;
   lastSnap=now;
-  // NOTE: the game-time field is 'gt', NOT 't' — 't' is the message type and a
-  // duplicate key here silently overwrote it, so snapshots were discarded.
-  sendAll({
-    t:'snap',
-    e:G.enemies.filter(e=>e.alive).slice(0,180).map(e=>[e.id,Math.round(e.x),Math.round(e.y),e.kind[0],Math.round(e.hp)]),
-    p:[...Net.players.values()].map(p=>[p.id,Math.round(p.hp),p.alive?1:0,p.kills||0]),
-    xp:G.xp, lv:G.lv, xn:G.xpNext, gt:Math.round(G.t),
-    s:G.shrines.map(s=>[s.id,Math.round(s.prog*100),s.used?1:0]),
-  });
+  // shared fields, identical for everyone
+  const players=[...Net.players.values()].map(p=>[p.id,Math.round(p.hp),p.alive?1:0,p.kills||0]);
+  const shrines=G.shrines.map(s=>[s.id,Math.round(s.prog*100),s.used?1:0]);
+  const live=G.enemies.filter(e=>e.alive);
+  for(const [pid,conn] of Net.conns){
+    const who=Net.players.get(pid);
+    // if we don't know where they are, fall back to a capped global view
+    const near = who
+      ? live.filter(e=>Math.abs(e.x-who.x)<SNAP_RANGE && Math.abs(e.y-who.y)<SNAP_RANGE)
+      : live.slice(0,120);
+    // NOTE: game time is 'gt' — 't' is the message type and must not be reused
+    try{
+      conn.send({
+        t:'snap',
+        e:near.slice(0,140).map(e=>[e.id,Math.round(e.x),Math.round(e.y),e.kind[0],Math.round(e.hp)]),
+        p:players, s:shrines,
+        xp:G.xp, lv:G.lv, xn:G.xpNext, gt:Math.round(G.t),
+      });
+    }catch(err){}
+  }
 }
 const KIND_BY_LETTER={d:'drake',w:'wyvern',s:'salamander',b:'brute'};
 function applySnapshot(d){
@@ -772,7 +832,14 @@ function applySnapshot(d){
       G.enemies.push(e);
     } else { e.tx=x; e.ty=y; e.hp=hp; }
   }
-  G.enemies=G.enemies.filter(e=>seen.has(e.id));
+  G.enemies=G.enemies.filter(e=>{
+    if(seen.has(e.id)) return true;
+    // it vanished from the host's view — it either died or left our bubble.
+    // Puff it either way; a kill you can't see costs nothing to render.
+    deathPuff(e.x,e.y,(ENEMY_KINDS[e.kind]||ENEMY_KINDS.drake).c2);
+    G.kills++;
+    return false;
+  });
   // players
   for(const [id,hp,alive,kills] of d.p){
     const p=Net.players.get(id);
@@ -784,13 +851,13 @@ function applySnapshot(d){
     if(s){ s.prog=prog/100; s.used=!!used; }
   }
 }
+// a small burst of scales where something died — purely local, never networked
+function deathPuff(x,y,c){
+  for(let i=0;i<8;i++){ const a=Math.random()*6.28, sp=60+Math.random()*160;
+    G.fx.push({type:'p',x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:.4,max:.4,c,r:2+Math.random()*2}); }
+}
 function applyEvent(d){
   switch(d.k){
-    case 'kill':
-      for(let i=0;i<8;i++){ const a=Math.random()*6.28,sp=60+Math.random()*160;
-        G.fx.push({type:'p',x:d.x,y:d.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:.4,max:.4,c:d.c,r:2+Math.random()*2}); }
-      G.kills++;
-      break;
     case 'died': {
       const p=Net.players.get(d.id); if(p){ p.alive=false; p.hp=0; }
       banner(d.id===Net.myId?'YOU FELL':(d.name+' HAS FALLEN'),
@@ -803,10 +870,53 @@ function applyEvent(d){
       banner(d.id===Net.myId?'YOU RISE':(p?p.name:'a slayer')+' RETURNS','the shrine gives back');
       break;
     }
-    case 'level': G.lv=d.lv; banner('LEVEL '+d.lv,'the hunt sharpens you'); break;
-    case 'wipe': G.over=true; banner('THE SWARM TAKES YOU ALL','the hunt ends here'); break;
+    case 'level':
+      G.lv=d.lv;
+      // max health isn't in the snapshot, so apply the level-up boost locally too
+      if(d.hpUp) for(const p of Net.players.values()){ p.maxhp+=d.hpUp; p.hp=Math.min(p.maxhp,p.hp+d.hpUp); }
+      banner('LEVEL '+d.lv, d.hpUp ? 'the party grows hardier' : 'your arts bite deeper');
+      break;
+    case 'say': banner(d.h,d.s); break;
+    case 'victory': G.over=true; showEnd(true); break;
+    case 'wipe': G.over=true; showEnd(false); break;
     case 'shrine': banner('A SHRINE AWAKENS','the fallen return'); break;
   }
+}
+
+/* End-of-run summary. Shows how the party did and what each slayer
+   contributed — the thing you actually talk about afterwards. */
+function showEnd(won){
+  G.running=false;
+  const mins=Math.floor(G.t/60), secs=Math.floor(G.t%60);
+  const tstr=String(mins).padStart(2,'0')+':'+String(secs).padStart(2,'0');
+  const roster=[...Net.players.values()].sort((a,b)=>(b.kills||0)-(a.kills||0));
+  const rows=roster.map((p,i)=>{
+    const O=ORDERS[p.order]||ORDERS.ember;
+    return `<div class="e-row">
+      <span class="e-rank">${i+1}</span>
+      <span class="e-nm" style="color:${O.c}">${p.name}</span>
+      <span class="e-or">${O.name}</span>
+      <span class="e-k">${p.kills||0} slain</span>
+      <span class="e-st">${p.alive?'stood':'fell'}</span>
+    </div>`;
+  }).join('');
+  let el=document.getElementById('endscreen');
+  if(!el){ el=document.createElement('div'); el.id='endscreen'; document.body.appendChild(el); }
+  el.innerHTML=`
+    <div class="e-wrap">
+      <h1 style="color:${won?'#8FE3A0':'#E0663D'}">${won?'THE HUNT IS WON':'THE SWARM TAKES YOU ALL'}</h1>
+      <div class="e-sub">${won?'you held to the tenth minute':'the hunt ends here'}</div>
+      <div class="e-stats">
+        <div>SURVIVED<b>${tstr}</b></div>
+        <div>SLAIN<b>${G.kills}</b></div>
+        <div>LEVEL<b>${G.lv}</b></div>
+      </div>
+      <div class="e-roster">${rows}</div>
+      <button class="btn" id="btn-again">Hunt Again</button>
+    </div>`;
+  el.classList.add('on');
+  const again=document.getElementById('btn-again');
+  if(again) again.onclick=()=>location.reload();
 }
 
 // =====================================================================
