@@ -940,7 +940,7 @@ const KITS = {
       base:{ dmg:13, cd:1.8, count:3, range:170 }, fits:['dmg','cd','count','mastery'] },
     { id:'nature_bramblefield', name:'Bramble Field', shape:'zone', behav:'zoneInstant',
       desc:'The ground grows teeth exactly where they are standing.',
-      base:{ dmg:10, cd:3.0, size:100, dur:4.0 }, fits:['dmg','cd','size','dur'] },
+      base:{ dmg:10, cd:3.0, size:100, dur:4.0 }, fits:['dmg','cd','size','dur'], icon:'bramble' },
     { id:'nature_treantsapling', name:'Treant Sapling', shape:'minion', behav:'minionSeed',
       desc:'Small, patient, and considerably stronger than it looks.',
       base:{ dmg:16, cd:1.6, count:1, speed:0 }, fits:['dmg','cd','count','mastery'] },
@@ -966,7 +966,7 @@ const KITS = {
       base:{ dmg:26, cd:2.8, size:22 }, fits:['dmg','cd','size','mastery'] },
     { id:'rock_rockslide', name:'Rockslide', shape:'bolt', behav:'growingBolt',
       desc:'It gathers weight the whole way there.',
-      base:{ dmg:20, cd:2.4, count:1, speed:260, size:14, pierce:3 }, fits:['dmg','cd','size','pierce','speed'] },
+      base:{ dmg:20, cd:2.4, count:1, speed:260, size:14, pierce:3 }, fits:['dmg','cd','size','pierce','speed'], icon:'boulder' },
     { id:'rock_crater', name:'Crater', shape:'zone', behav:'zoneStack',
       desc:'You put a hole where the crowd used to be.',
       base:{ dmg:9, cd:3.2, size:100, dur:4.5 }, fits:['dmg','cd','size','dur','mastery'] },
@@ -1255,7 +1255,7 @@ function buildAbilities(el){
     b.dmg = Math.round(b.dmg * t.dmg * 10)/10;
     if(b.cd)   b.cd   = Math.round(b.cd * t.cd * 100)/100;
     if(b.size) b.size = Math.round(b.size * t.size);
-    return { id:a.id, arch:a.shape, shape:a.shape, behav:a.behav, icon:a.shape,
+    return { id:a.id, arch:a.shape, shape:a.shape, behav:a.behav, icon:(a.icon||a.shape),
              name:a.name, desc:a.desc, base:b, el:el.id, fits:a.fits, kit,
              trigger:(a.shape==='threshold'?'cap':null), mastery:kit.mastery };
   });
@@ -1265,14 +1265,16 @@ ELEMENTS.forEach(e => { e.abilities = buildAbilities(e); Object.assign(e, ROLES[
 /* --------------------------- RARITY ------------------------------------- */
 const RARITY = [
   { id:'common',    name:'Common',    m:1.00, c:'#C9C3B4', w:100 },
-  { id:'uncommon',  name:'Uncommon',  m:1.55, c:'#6FCB7A', w:58  },
-  { id:'rare',      name:'Rare',      m:2.30, c:'#5AA9E6', w:30  },
-  { id:'epic',      name:'Epic',      m:3.40, c:'#B77BE8', w:13  },
-  { id:'legendary', name:'Legendary', m:5.20, c:'#E8A33D', w:4   },
+  { id:'uncommon',  name:'Uncommon',  m:1.45, c:'#6FCB7A', w:58  },
+  { id:'rare',      name:'Rare',      m:1.95, c:'#5AA9E6', w:30  },
+  { id:'epic',      name:'Epic',      m:2.60, c:'#B77BE8', w:13  },
+  { id:'legendary', name:'Legendary', m:3.40, c:'#E8A33D', w:4   },
 ];
 function rollRarity(minutes){
-  // late game tilts the table upward
-  const tilt = 1 + minutes * 0.10;
+  // Late game still tilts upward, but at HALF the old rate. At 0.10 the table
+  // had drifted so far by minute 10 that Legendary hit 12.7% and Common fell
+  // under 20% — high rarity stopped being a moment and became the baseline.
+  const tilt = 1 + minutes * 0.05;
   const tbl = RARITY.map((r,i)=>({ r, w: r.w * Math.pow(tilt, i) }));
   const tot = tbl.reduce((s,x)=>s+x.w,0);
   let n = SIM()*tot;
@@ -1875,6 +1877,18 @@ function abilityIcon(shape, c, c2, px, elId){
         x.lineTo(M+Math.cos(a)*4,M+Math.sin(a)*4); x.stroke(); }
       x.beginPath(); x.arc(M,M,2.8,0,6.2832); x.fill();
       break;
+    case 'boulder':     // a heavy rolling stone, distinct from a thrown shard
+      ctx.beginPath(); ctx.arc(M,M,6.5,0,6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.arc(M-1.5,M-1,2.2,0,6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(M-9,M+7); ctx.lineTo(M+9,M+7); ctx.stroke();
+      break;
+    case 'bramble':     // thorned ground, distinct from a spore cloud
+      ctx.beginPath(); ctx.ellipse(M,M+2,8,4.5,0,0,6.2832); ctx.stroke();
+      for(let i=0;i<5;i++){
+        const bx = M-7 + i*3.5;
+        ctx.beginPath(); ctx.moveTo(bx, M+2); ctx.lineTo(bx+1.5, M-5); ctx.stroke();
+      }
+      break;
     case 'cone':        // a breath, widening
       x.beginPath(); x.moveTo(M-7,M); x.lineTo(M+7,M-6); x.lineTo(M+7,M+6); x.closePath();
       x.globalAlpha=.35; x.fill(); x.globalAlpha=1; x.stroke();
@@ -1940,13 +1954,17 @@ addEventListener('resize', resize);
 
 const keys = {};
 addEventListener('keydown', e=>{
-  // the relic prompt owns the keyboard while it's open
+  // ALWAYS record the physical key, even while a menu is open — the game
+  // simply doesn't act on it while paused. Swallowing it here is what caused
+  // keys to stick: the game's idea of what you were holding drifted from
+  // reality and there was no event left to correct it.
+  keys[e.key.toLowerCase()] = true;
+  // the relic prompt owns Enter/Escape while it's open
   if(G && G.itemChoiceOpen){
     if(e.key==='Enter'){ e.preventDefault(); G.itemChoiceOpen(true);  return; }
     if(e.key==='Escape'){ e.preventDefault(); G.itemChoiceOpen(false); return; }
     return;
   }
-  keys[e.key.toLowerCase()] = true;
   if(e.key === ' ' || e.key === 'Shift') e.preventDefault();   // dodge keys, not page actions
   // ULTIMATE on Q — fires once per press, only when ready and in a live run
   if(e.key.toLowerCase() === 'q' && G && G.running && !G.paused && !G.menuPaused && G.ultCd <= 0){
@@ -2151,17 +2169,17 @@ const BOSSES = {
      (shockwaves) · spit (aimed shot) · volley (fan of shots) · rain
      (telegraphed ground eruptions) · summoner (calls the swarm). */
   firedragon: {
-    name:'Fire Dragon', c:'#FF6B2C', c2:'#FFC46B', hp:680, sp:54, dmg:34, r:31,
-    resist:MAG, weak:PHYS, breath:true, rain:true, sweep:true,
+    name:'Fire Dragon', c:'#FF6B2C', c2:'#FFC46B', hp:1150, sp:54, dmg:40, r:31,
+    resist:MAG, weak:PHYS, breath:true, rain:true, sweep:true, volley:true,
     line:'It has burned this valley to glass and it is not finished.' },
   lightningdragon: {
-    name:'Lightning Dragon', c:'#F2E14C', c2:'#FFFBB0', hp:600, sp:72, dmg:32, r:27,
-    resist:PHYS, weak:MAG, charge:true, volley:true, sweep:true,
+    name:'Lightning Dragon', c:'#F2E14C', c2:'#FFFBB0', hp:1020, sp:72, dmg:38, r:27,
+    resist:PHYS, weak:MAG, charge:true, volley:true, sweep:true, rain:true,
     line:'It crosses the ground faster than you can decide to move.' },
   waterdragon: {
-    name:'Water Dragon', c:'#2FA8E0', c2:'#9EE6FF', hp:760, sp:56, dmg:32, r:31,
-    resist:null, weak:null, breath:true, spit:true, rain:true,
-    line:'No weakness, no resistance. It simply outlasts you.' },
+    name:'Water Dragon', c:'#2FA8E0', c2:'#9EE6FF', hp:1280, sp:56, dmg:38, r:31,
+    resist:PHYS, weak:null, breath:true, spit:true, rain:true, sweep:true,
+    line:'Scales like wet stone — steel slides off. It has no weakness to find, and it simply outlasts you.' },
   lung: {
     name:'Lung', c:'#D4453F', c2:'#FFD860', hp:640, sp:88, dmg:30, r:21,
     resist:MAG, weak:PHYS, serpent:true, volley:true, sweep:true, spit:true,
@@ -2171,17 +2189,18 @@ const BOSSES = {
     resist:null, weak:null, fly:true, spit:true, volley:true, rain:true,
     line:'Winged, legless, airborne. Your ground magic will never touch it.' },
   quetzalcoatl: {
-    name:'Quetzalcoatl', c:'#7FD8D0', c2:'#D6FFFB', hp:265, sp:112, dmg:20, r:22,
-    resist:null, weak:null, fly:true, charge:true,
+    name:'Quetzalcoatl', c:'#7FD8D0', c2:'#D6FFFB', hp:880, sp:112, dmg:34, r:22,
+    resist:MAG, weak:PHYS, fly:true, charge:true, volley:true, sweep:true,
     line:'The fastest thing with wings. It is already behind you.' },
   lindwurm: {
-    name:'Lindwurm', c:'#A9B3BE', c2:'#E6EEF5', hp:560, sp:32, dmg:32, r:35,
-    resist:PHYS, weak:MAG, slam:true,
-    line:'Armoured past the point of reason. Steel will not do this — but a curse will.' },
+    name:'Lindwurm', c:'#A9B3BE', c2:'#E6EEF5', hp:1400, sp:32, dmg:40, r:35,
+    resist:PHYS, weak:MAG, slam:true, burrow:true, rain:true,
+    line:'Armoured past the point of reason. It does not chase you over the ground — it goes under it.' },
   basilisk: {
-    name:'The Basilisk', c:'#6FA84F', c2:'#C6E39A', hp:2600, sp:40, dmg:30, r:58,
+    name:'The Basilisk', c:'#6FA84F', c2:'#C6E39A', hp:5200, sp:40, dmg:38, r:58,
     resist:null, weak:null, breath:true, summoner:true,
-    line:'The Dragon Mother. She does not hunt alone.' },
+    burrow:true, rain:true, sweep:true, volley:true,
+    line:'The Dragon Mother. She does not hunt alone, and the ground is hers.' },
   typhon: {
     name:'Typhon', c:'#E0663D', c2:'#FF8C3A', hp:100, sp:0, dmg:22, r:90,
     resist:null, weak:null, breath:true, summoner:true,
@@ -2246,7 +2265,10 @@ const CAGE = { R0:560, RMIN:150, SHRINK:40, SEG:20, SEG_HP:140, GAP_NEEDED:1, CO
 const TYPHON = {
   HEAD_POOL: 100,          // total heads to destroy across the fight
   ACTIVE: 8,               // heads alive at once
-  HEAD_HP: 120,            // base head hp (scaled up a touch by run difficulty)
+  // Heads were dying far too fast: a strong build cleared all 100 in ~194s
+  // against a fight designed for 420s, so Phases III and IV never happened and
+  // Maw Convergence was never seen. Roughly 2.2x puts the pacing back.
+  HEAD_HP: 200,            // base head hp (scaled up by run difficulty)
   BODY_R: 90,              // the central body radius
   ORBIT: 300,              // how far heads float from the body
   ARENA_R: 620,            // the sealed ring you fight inside
@@ -2380,8 +2402,26 @@ function tickTyphon(dt){
   if(T.t >= TYPHON.FIGHT_CAP && !T.resolved){
     T.resolved = true;
     for(const h of T.heads){ h.vulnT = 999; h.vulnMul = 3.5; }
-    G.banner = { text:'THE HUNDRED FALTERS', life:3, max:3, sub:'every head lies open — finish it' };
+    T.collapseT = 0;
+    G.banner = { text:'THE HUNDRED FALTERS', life:3, max:3, sub:'it is coming apart — finish it' };
     G.shake = Math.max(G.shake, 14);
+  }
+  /* Past the cap the Titan is genuinely failing: it sheds heads on its own,
+     so the fight always concludes rather than stalling out against a pool a
+     weak build cannot chew through. Making heads merely "vulnerable" was not
+     a resolution at all — it just made a stuck fight slightly faster. */
+  if(T.resolved && !T.dead){
+    T.collapseT -= dt;
+    if(T.collapseT <= 0){
+      // accelerates as it comes apart: 0.8s at first, down to ~0.25s
+      const over = Math.min(1, (T.t - TYPHON.FIGHT_CAP) / 60);
+      T.collapseT = 0.8 - over*0.55;
+      const doomed = T.heads.find(h=>h.alive);
+      if(doomed){ doomed.hp = 0; kill(doomed); }
+      else if(T.pool > 0){ T.pool--; T.killed++; }
+      G.shake = Math.max(G.shake, 5);
+    }
+    for(const h of T.heads){ h.vulnT = 999; h.vulnMul = 3.5; }
   }
 
   const bodyActive = T.attacks.length > 0;
@@ -2912,7 +2952,8 @@ function spawnBoss(){
     resist:B.resist, weak:B.weak,
     fly:!!B.fly, ranged:!!B.spit, fireT:rnd(1,2),
     breath:!!B.breath, charge:!!B.charge, slam:!!B.slam,
-    volley:!!B.volley, rain:!!B.rain, sweep:!!B.sweep,
+    volley:!!B.volley, rain:!!B.rain, sweep:!!B.sweep, burrow:!!B.burrow,
+    burT:rnd(6,9), burState:'up',
     volT:rnd(2.5,4), rainT:rnd(4,6), swpT:rnd(3,5),
     bstate:'idle', bcd:rnd(2.5,4), aim:0, btimer:0, btick:0, blen:330, bhalf:0.42,
     chT:rnd(3,5), chState:'idle', chvx:0, chvy:0,
@@ -4234,6 +4275,26 @@ function spawnArtBolt(a, ang, extra){
     trail:[], art:a, behav:a.def.behav });
 }
 const ZONE_TICK = 0.35;   // seconds between damage pulses for ground effects
+const THRESHOLD_CD = 0.9; // minimum seconds between two firings of a threshold art
+
+/* AREA DAMAGE STACKING.
+   Overlapping area effects each dealt full damage, so stacking three or four
+   on one spot multiplied output without limit — which is how the late game
+   stopped being a fight. Each further area hit on the SAME dragon within a
+   short window lands for less. Single-target arts are untouched: this only
+   restrains piling area on area. */
+const AOE_SHAPES = new Set(['nova','zone','aura','threshold','spend','cone','trail']);
+const AOE_FALLOFF = [1.0, 0.55, 0.35, 0.22, 0.14];   // 1st, 2nd, 3rd... hit
+const AOE_WINDOW  = 0.45;                            // seconds before it resets
+function aoeScale(e){
+  if(e.aoeT > 0){
+    e.aoeN = (e.aoeN||0) + 1;
+  } else {
+    e.aoeN = 0;
+  }
+  e.aoeT = AOE_WINDOW;
+  return AOE_FALLOFF[Math.min(e.aoeN, AOE_FALLOFF.length-1)];
+}
 function artZone(a, x, y, opts){
   G.zones.push({ x, y, r:A(a,'size'), dmg:A(a,'dmg'), life:A(a,'dur'), max:A(a,'dur'),
     c:G.el.c2, type:ARCH_TYPE[a.def.shape],
@@ -4481,6 +4542,10 @@ function firstWith(pred){
 
 /* ---- threshold arts: no cooldown, they fire when a resource caps ---- */
 function fireThreshold(a, e){
+  // rate limit: without this a threshold art fires as fast as things cap,
+  // which with an aura feeding it is effectively every frame
+  if((a.thT||0) > 0) return;
+  a.thT = THRESHOLD_CD;
   _dmgSrc = a.def.id;
   const B = a.def.behav;
   const R = RES[G.el.id];
@@ -4492,7 +4557,14 @@ function fireThreshold(a, e){
       e.kindle = 0;
       G.fx.push({ type:'nova', x:e.x, y:e.y, r:6, max:A(a,'size'), sp:600,
                   dmg:A(a,'dmg'), c:G.el.c2, dtype:MAG, hitset:new Set(), srcId:a.def.id });
-      for(const o of near(e.x,e.y,A(a,'size'))) if(o.alive&&o!==e) addStack(o, Math.ceil(st/2));   // through addStack(), so it can actually chain
+      // the spread seeds neighbours but deliberately can NOT cap them: a
+      // detonation that instantly detonates its neighbours is a chain reaction
+      // that never stops. One stack short is the most it will ever give.
+      for(const o of near(e.x,e.y,A(a,'size'))){
+        if(!o.alive || o===e) continue;
+        const room = Math.max(0, (RES.fire.max - 1) - (o.kindle||0));
+        if(room > 0) addStack(o, Math.min(room, Math.ceil(st/2)));
+      }
       break;
     }
     case 'freeze': {            // water
@@ -4688,8 +4760,6 @@ function drawOrderZone(z, k, fxA){
       break;
     }
     case 'water': {   // a pool with concentric ripples
-      ctx.fillStyle = c+'44';
-      ctx.beginPath(); ctx.ellipse(z.x,z.y,z.r,z.r*0.82,0,0,6.2832); ctx.fill();
       ctx.strokeStyle = c+'BB'; ctx.lineWidth=1.6;
       for(let i=0;i<3;i++){
         const rr = z.r * (((t*0.5 + i*0.33) % 1));
@@ -4699,8 +4769,6 @@ function drawOrderZone(z, k, fxA){
       break;
     }
     case 'nature': {   // creeping bramble, not a glow
-      ctx.fillStyle = c+'33';
-      ctx.beginPath(); ctx.arc(z.x,z.y,z.r,0,6.2832); ctx.fill();
       ctx.strokeStyle = c+'CC'; ctx.lineWidth=2; ctx.lineCap='round';
       for(let i=0;i<9;i++){
         const a=_vseed(z.x,z.y,i)*6.2832 + Math.sin(t*0.7+i)*0.12;
@@ -4711,9 +4779,7 @@ function drawOrderZone(z, k, fxA){
       }
       break;
     }
-    case 'rock': {   // cracked, broken ground
-      ctx.fillStyle = c+'3A';
-      ctx.beginPath(); ctx.arc(z.x,z.y,z.r,0,6.2832); ctx.fill();
+    case 'rock': {   // cracked, broken ground — cracks only, no filled disc
       ctx.strokeStyle = c+'DD'; ctx.lineWidth=2;
       for(let i=0;i<7;i++){
         const a=_vseed(z.x,z.y,i)*6.2832;
@@ -4729,8 +4795,6 @@ function drawOrderZone(z, k, fxA){
       break;
     }
     case 'iron': {   // scattered caltrops on a dull metal wash
-      ctx.fillStyle = c+'2E';
-      ctx.beginPath(); ctx.arc(z.x,z.y,z.r,0,6.2832); ctx.fill();
       ctx.fillStyle = c+'EE';
       for(let i=0;i<12;i++){
         const a=_vseed(z.x,z.y,i)*6.2832, rr=_vseed(z.x,z.y,i+60)*z.r*0.85;
@@ -4752,8 +4816,6 @@ function drawOrderZone(z, k, fxA){
       break;
     }
     case 'light': {   // consecrated ground: a clean ring and radiating spokes
-      ctx.fillStyle = c+'2A';
-      ctx.beginPath(); ctx.arc(z.x,z.y,z.r,0,6.2832); ctx.fill();
       ctx.strokeStyle = c+'DD'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.arc(z.x,z.y,z.r*0.92,0,6.2832); ctx.stroke();
       ctx.lineWidth=1.2;
@@ -4780,8 +4842,6 @@ function drawOrderZone(z, k, fxA){
       break;
     }
     case 'lightning': {   // a charged field, snapping arcs across it
-      ctx.fillStyle = c+'26';
-      ctx.beginPath(); ctx.arc(z.x,z.y,z.r,0,6.2832); ctx.fill();
       ctx.globalCompositeOperation='lighter';
       ctx.strokeStyle=c; ctx.lineWidth=1.6;
       for(let i=0;i<4;i++){
@@ -5345,7 +5405,10 @@ function tickMinions(dt){
     a.mins = a.mins || [];
     const want = A(a,'count');
     while(a.mins.length < want)
-      a.mins.push({ x:G.p.x+frnd(-40,40), y:G.p.y+frnd(-40,40), t:0, anchored:false });
+      // each familiar gets its OWN station: a slot around you and its own
+      // distance, so a second and third don't sit inside the first
+      a.mins.push({ x:G.p.x+frnd(-40,40), y:G.p.y+frnd(-40,40), t:0, anchored:false,
+                    slot:a.mins.length });
     _dmgSrc = a.def.id;
     for(const m of a.mins){
       const B=a.def.behav;
@@ -5356,11 +5419,22 @@ function tickMinions(dt){
         const far = Math.hypot(m.x-G.p.x, m.y-G.p.y) > 420;
         if(!m.anchored || far){
           m.anchored=true;
-          m.x=G.p.x+frnd(-60,60); m.y=G.p.y+frnd(-60,60);
+          // plant each at its own angle so several don't stack on one spot
+          const pa = ((m.slot||0) / Math.max(1,a.mins.length)) * 6.2832 + frnd(-0.3,0.3);
+          const pr = 55 + ((m.slot||0) % 3) * 30;
+          m.x = G.p.x + Math.cos(pa)*pr; m.y = G.p.y + Math.sin(pa)*pr*0.7;
           if(far) G.fx.push({ type:'p', x:m.x, y:m.y, vx:0, vy:0, life:.35, max:.35, c:G.el.c2, r:4 });
         }
       } else {
-        const tx=G.p.x+60, ty=G.p.y-45;
+        // spread them around you: alternating near/far rings at even angles,
+        // and drifting slowly so they never sit perfectly still on top of each
+        // other. All of them used to home on the SAME point and overlap.
+        const n = Math.max(1, a.mins.length);
+        const slot = m.slot || 0;
+        const ang = (slot / n) * 6.2832 + G.t * 0.35;
+        const ring = 58 + (slot % 3) * 34;            // near / mid / far
+        const tx = G.p.x + Math.cos(ang) * ring;
+        const ty = G.p.y + Math.sin(ang) * ring * 0.7 - 20;
         const dx=tx-m.x, dy=ty-m.y, d=Math.hypot(dx,dy)||1;
         if(d>8){
           // A familiar that can't keep pace with a running slayer gets left
@@ -5446,6 +5520,7 @@ function applyZoneBehav(z, e){
 
 /* ---- master tick ---- */
 function tickAbilities(dt){
+  for(const a of G.abilities) if(a.thT > 0) a.thT -= dt;   // threshold rate limit
   tickPlayerResource(dt);
   tickSeeds(dt);
   tickOrbits(dt);
@@ -5466,6 +5541,7 @@ function tickAbilities(dt){
    one string assignment per source, one addition per hit. */
 let _dmgSrc = null;
 function hit(e, dmg, c, type){
+  if(e.untargetable) return;   // burrowed — it is under the ground, nothing to strike
   let crit = SIM() < G.stats.crit;
   let d = dmg * (crit ? G.stats.critdmg : 1);
   // Forge's Sunder: stripped scale means every later wound bites deeper
@@ -5475,6 +5551,11 @@ function hit(e, dmg, c, type){
   // Typhon punish windows: a whiffed Skull-Break, a bloomed gift head, or the
   // hard-resolution opening all leave a head bonus-vulnerable for a moment
   if(e.typhonHead && e.vulnT > 0 && e.vulnMul) d *= e.vulnMul;
+  // stacked area damage gives diminishing returns on the same target
+  if(_dmgSrc){
+    const src = G.abilities && G.abilities.find(x=>x.def.id===_dmgSrc);
+    if(src && AOE_SHAPES.has(src.def.shape)) d *= aoeScale(e);
+  }
   let mark = '';
   if(type && e.resist === type){ d *= RESIST_MULT; mark = 'resist'; }
   else if(type && e.weak === type){ d *= WEAK_MULT; mark = 'weak'; }
@@ -5640,8 +5721,8 @@ const DRAGONS = {
 };
 const DRAGON_ORDER = ['drake','wyvern','salamander','hydra','serpent'];
 // the roaming elite is a real fight now, not a fat drake: it breathes and volleys
-const ELITE = { name:'Dragon', hp:620, sp:54, r:30, dmg:32, xp:44, gold:36, c:'#F2C14E', c2:'#FFF0B8',
-                breath:true, volley:true };
+const ELITE = { name:'Dragon', hp:900, sp:54, r:30, dmg:36, xp:44, gold:36, c:'#F2C14E', c2:'#FFF0B8',
+                breath:true, volley:true, sweep:true, resist:MAG, weak:PHYS };
 
 // A mechanic the player never learns is a bug. Teach it once, the first time.
 const BANNER = {
@@ -5680,6 +5761,35 @@ function spawnPos(){
   const dist = Math.max(W,H)*0.62 + rnd(30,140);
   return { x:G.p.x + Math.cos(ang)*dist, y:G.p.y + Math.sin(ang)*dist };
 }
+/* CHAMPION DRAGONS.
+   Any ordinary dragon can arrive as a champion: tougher, worth more, and armed
+   with a ranged attack its base kind does not have. This is what gives the
+   early game something to dodge — before this you could clear a thousand
+   dragons in five minutes with almost nothing coming back at you. */
+const CHAMPION = {
+  chance: 0.06,        // roughly 1 dragon in 16
+  hpMul: 3.2,
+  dmgMul: 1.5,
+  sizeMul: 1.35,
+  xpMul: 4,
+  goldMul: 4,
+};
+function makeChampion(e){
+  e.champion = true;
+  e.hp *= CHAMPION.hpMul; e.maxhp = e.hp;
+  e.dmg *= CHAMPION.dmgMul;
+  e.r   *= CHAMPION.sizeMul;
+  e.xp   = Math.round(e.xp * CHAMPION.xpMul);
+  e.gold = Math.round((e.gold||1) * CHAMPION.goldMul);
+  e.sp  *= 0.92;                       // slightly heavier on its feet
+  // every champion gains a ranged threat, chosen to suit its kind
+  if(e.key === 'drake'){ e.champVolley = true; e.cvT = rnd(1.5,3); }
+  else if(e.key === 'wyvern'){ e.champDive = true; e.cvT = rnd(2.5,4); }
+  else if(e.key === 'salamander'){ e.champSpread = true; e.cvT = rnd(2,3.5); }
+  else { e.champVolley = true; e.cvT = rnd(2,3.5); }
+  return e;
+}
+
 function mkDragon(key, x, y, gen=0){
   const t = DRAGONS[key];
   const shrink = Math.pow(0.50, gen);            // hydra children: weaker...
@@ -5696,6 +5806,8 @@ function mkDragon(key, x, y, gen=0){
     fireT: rnd(1.0, 2.6), charge:0, elite:false, ph:SIM()*6.28,
   };
   e.maxhp = e.hp;
+  // a split-off child is never a champion — that would compound endlessly
+  if(gen === 0 && SIM() < CHAMPION.chance) makeChampion(e);
   return e;
 }
 function spawnSerpent(x,y){
@@ -5865,6 +5977,7 @@ function update(dt){
     }
 
     decayStacks(e, dt);
+    if(e.aoeT > 0){ e.aoeT -= dt; if(e.aoeT <= 0) e.aoeN = 0; }
     if(e.slowT > 0) e.slowT -= dt; else e.drag = 0;
     if(e.stunT > 0) e.stunT -= dt;
     // Ember's Kindle: the wound keeps burning after the art has moved on
@@ -5938,6 +6051,85 @@ function update(dt){
                     dmg:e.dmg*0.75, c:e.c2, hitset:new Set(), hostile:true });
         G.shake = Math.max(G.shake, 8);
         spd = 0;
+      }
+    }
+
+    /* --- CHAMPION ATTACKS: the reason the early game has anything to dodge.
+       Each kind gets a threat its ordinary version never had. --- */
+    if(e.champion && e.cvT !== undefined){
+      e.cvT -= dt;
+      if(e.cvT <= 0 && d < 560){
+        if(e.champVolley){                      // drake: a three-shot fan
+          e.cvT = rnd(2.6,4.0);
+          const base = Math.atan2(dy,dx);
+          for(let i=0;i<3;i++){
+            const a2 = base + (i-1)*0.20;
+            G.ebullets.push({ x:e.x, y:e.y, vx:Math.cos(a2)*230, vy:Math.sin(a2)*230,
+                              r:6, dmg:e.dmg*0.6, life:3.0, c:e.c, c2:e.c2, ph:0 });
+          }
+        } else if(e.champSpread){               // salamander: a wide burst
+          e.cvT = rnd(3.0,4.4);
+          for(let i=0;i<6;i++){
+            const a2 = (i/6)*6.2832 + SIM()*0.4;
+            G.ebullets.push({ x:e.x, y:e.y, vx:Math.cos(a2)*200, vy:Math.sin(a2)*200,
+                              r:6, dmg:e.dmg*0.5, life:2.6, c:e.c, c2:e.c2, ph:0 });
+          }
+        } else if(e.champDive){                 // wyvern: a fast committed swoop
+          e.cvT = rnd(3.4,5.0);
+          e.diveT = 0.55;
+          e.diveX = p.x; e.diveY = p.y;
+        }
+      }
+      // resolve a swoop: it commits to where you WERE, so it can be left
+      if(e.diveT > 0){
+        e.diveT -= dt;
+        const ddx = e.diveX - e.x, ddy = e.diveY - e.y, dd = Math.hypot(ddx,ddy)||1;
+        e.x += (ddx/dd) * 520 * dt; e.y += (ddy/dd) * 520 * dt;
+        if(Math.hypot(p.x-e.x, p.y-e.y) < e.r + p.r && p.inv <= 0) hurtPlayer(e.dmg*0.9, e.x, e.y);
+        if(e.diveT <= 0) e.diveT = 0;
+      }
+    }
+
+    /* --- BURROW: it stops chasing you over the ground and goes under it,
+       surfacing where you are standing. While submerged it cannot be hit —
+       so the punish window is the moment it comes back up. --- */
+    if(e.burrow){
+      if(e.burState === 'up'){
+        e.burT -= dt;
+        if(e.burT <= 0 && d > 120){          // only dives if you have distance
+          e.burState = 'down';
+          e.burT = 1.3;                       // time spent under
+          e.untargetable = true;
+          G.fx.push({ type:'nova', dtype:null, x:e.x, y:e.y, r:6, max:e.r*2.2, sp:520,
+                      dmg:0, c:e.c2, hitset:new Set() });
+        }
+      } else if(e.burState === 'down'){
+        e.burT -= dt;
+        // travel unseen toward the player, then mark where it will erupt
+        e.x += (p.x - e.x) * Math.min(1, dt*1.8);
+        e.y += (p.y - e.y) * Math.min(1, dt*1.8);
+        if(e.burT <= 0.55 && !e.burMarked){
+          e.burMarked = true;
+          e.burX = p.x; e.burY = p.y;         // locked in — you can still leave
+          G.fx.push({ type:'burrow', x:e.burX, y:e.burY, life:0.55, max:0.55, r:e.r*1.4, c:e.c });
+        }
+        if(e.burT <= 0){
+          e.burState = 'up';
+          e.burT = rnd(7,11);
+          e.burMarked = false;
+          e.untargetable = false;
+          e.x = e.burX ?? p.x; e.y = e.burY ?? p.y;
+          if(Math.hypot(p.x-e.x, p.y-e.y) < e.r*1.4 && p.inv <= 0) hurtPlayer(e.dmg*1.1, e.x, e.y);
+          G.fx.push({ type:'nova', dtype:null, x:e.x, y:e.y, r:8, max:e.r*2.6, sp:700,
+                      dmg:e.dmg*0.5, c:e.c2, hitset:new Set(), hostile:true });
+          G.shake = Math.max(G.shake, 9);
+          for(let i=0;i<14;i++){
+            const a2=(i/14)*6.2832;
+            G.fx.push({ type:'p', x:e.x, y:e.y, vx:Math.cos(a2)*frnd(80,220), vy:Math.sin(a2)*frnd(80,220),
+                        life:frnd(.3,.7), max:.7, c:e.c2, r:frnd(2,4) });
+          }
+        }
+        continue;   // submerged: no other attacks, no contact damage
       }
     }
 
@@ -6388,7 +6580,10 @@ function openItemChoice(def, rar){
   const amt    = def.v * rar.m * mult;
   const shown  = def.pct ? `+${(amt*100).toFixed(1)}%` : `+${amt.toFixed(1)}`;
 
-  G.paused = true; clearKeys();
+  // NOTE: deliberately NOT clearKeys() here. The loop already ignores input
+  // while paused, and wiping keys you are still holding is what desynced the
+  // game from your hands and left movement dead after closing the prompt.
+  G.paused = true;
   const box = document.getElementById('itemchoice');
 
   // the satchel is full of five other relics — choose one to give up
@@ -6799,7 +6994,10 @@ function openLevelUp(){
       const txt = o.u.pct ? `+${Math.round(o.amt*100)}% ${upLabel(o.u,o.a)}` : `+${o.amt} ${upLabel(o.u,o.a)}`;
       b.style.borderColor = o.rar.c + '55';
       b.innerHTML = `
-        <div class="icon">${abilityIcon(o.a.def.arch, o.rar.c, o.rar.c, 44, o.a.def.el)}</div>
+        <!-- pass the ORDER's two colours, not the rarity colour twice: using
+             one colour for both base and accent flattened every icon into the
+             same shape, so different arts became indistinguishable -->
+        <div class="icon">${abilityIcon(o.a.def.arch, G.el.c, G.el.c2, 44, o.a.def.el)}</div>
         <div class="rar" style="color:${o.rar.c}">${o.rar.name}</div>
         <div class="nm">${o.a.def.name}</div>
         <div class="ds">Rank ${o.a.lv} → ${o.a.lv+1}. ${o.a.def.desc}</div>
@@ -7383,12 +7581,36 @@ function render(){
   const halfW = W/2 + 60, halfH = H/2 + 60;   // cull margin so sprites don't pop at edges
   for(const e of G.enemies){
     // off-screen? skip drawing entirely — the swarm can be 1000+ but only ~50 are visible
+    if(e.untargetable) continue; // burrowed: under the ground, not standing on it
     if(e.typhonHead) continue;   // heads are drawn by drawTyphon with their own look
     if(Math.abs(e.x - G.cam.x) > halfW || Math.abs(e.y - G.cam.y) > halfH) continue;
     const fly = e.fly;
     const bob = Math.sin(e.ph) * (fly ? 4 : 1.4);
     const y = e.y + bob - (fly ? 12 : 0);
     const flash = e.flash > 0;
+
+    // CHAMPION MARK: a champion shoots back, so you must be able to pick it
+    // out of a crowd at a glance — a pulsing ring and a crown above it.
+    if(e.champion){
+      const pulse = 0.5 + 0.5*Math.sin(G.t*4 + e.ph);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = '#FFD860'; ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.35 + pulse*0.4;
+      ctx.beginPath(); ctx.arc(e.x, y, e.r + 6 + pulse*2, 0, 6.2832); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = '#FFD860';
+      const cw = e.r*0.7;
+      for(let i=0;i<3;i++){
+        const cx2 = e.x - cw + i*cw;
+        ctx.beginPath();
+        ctx.moveTo(cx2-2.5, y - e.r - 7);
+        ctx.lineTo(cx2,     y - e.r - 13);
+        ctx.lineTo(cx2+2.5, y - e.r - 7);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.fillRect(e.x - cw - 2.5, y - e.r - 8, cw*2 + 5, 2.5);
+    }
 
     // shadow — the read that says "ground magic can't reach this"
     if(fly){
@@ -7451,17 +7673,73 @@ function render(){
 
   // salamander spit
   ctx.globalCompositeOperation = 'lighter';
+  /* Enemy projectiles used to be one identical gradient blob whatever threw
+     them. With champions on the field there can be fifty in flight at once,
+     so each now looks like what it came from — you can read a fireball from a
+     venom spit at a glance. */
   for(const b of G.ebullets){
     // defensive: a projectile missing ph/c2 used to produce a NaN radius and
     // take the whole game down. Never trust the fields to be complete.
     const br = Number.isFinite(b.r) ? b.r : 6;
     const bp = Number.isFinite(b.ph) ? b.ph : 0;
     const c1 = b.c || '#FFAA66', c2 = b.c2 || c1;
-    const rad = Math.max(1, br*2 + Math.sin(bp)*1.5);
-    const g = ctx.createRadialGradient(b.x,b.y,0,b.x,b.y,Math.max(1,br*2));
-    g.addColorStop(0,c2); g.addColorStop(.5,c1); g.addColorStop(1,c1+'00');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(b.x, b.y, rad, 0, 6.2832); ctx.fill();
+    const ang = Math.atan2(b.vy||0, b.vx||1);
+    ctx.save();
+    ctx.translate(b.x, b.y); ctx.rotate(ang);
+
+    if(c1 === '#FF6B2C' || c1 === '#F2C14E'){          // fire dragons — a fireball
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = '#C03416';
+      ctx.beginPath();
+      ctx.moveTo(-br*2.2, 0);
+      ctx.quadraticCurveTo(-br*0.4, br*1.1, br*1.2, 0);
+      ctx.quadraticCurveTo(-br*0.4, -br*1.1, -br*2.2, 0);
+      ctx.fill();
+      ctx.fillStyle = '#FF8C3A';
+      ctx.beginPath(); ctx.arc(0, 0, br*0.9, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = '#FFC46B';
+      ctx.beginPath(); ctx.arc(br*0.25, 0, br*0.45, 0, 6.2832); ctx.fill();
+    }
+    else if(c1 === '#F2E14C'){                          // lightning — a spark
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = c2; ctx.lineWidth = br*0.5;
+      ctx.beginPath();
+      ctx.moveTo(-br*1.6, -br*0.5); ctx.lineTo(0, 0);
+      ctx.lineTo(br*0.3, -br*0.4); ctx.lineTo(br*1.6, br*0.5);
+      ctx.stroke();
+    }
+    else if(c1 === '#2FA8E0'){                          // water — a pressured drop
+      ctx.fillStyle = c1;
+      ctx.beginPath();
+      ctx.moveTo(br*1.5, 0);
+      ctx.quadraticCurveTo(-br*0.4, br, -br*1.6, 0);
+      ctx.quadraticCurveTo(-br*0.4, -br, br*1.5, 0);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFFAA';
+      ctx.beginPath(); ctx.arc(-br*0.2, -br*0.25, br*0.3, 0, 6.2832); ctx.fill();
+    }
+    else if(c1 === '#4FBF5F' || c1 === '#6FA84F'){      // nature/basilisk — venom
+      ctx.fillStyle = c1;
+      ctx.beginPath(); ctx.ellipse(0, 0, br*1.3, br*0.85, 0, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = c2;
+      ctx.beginPath(); ctx.arc(-br*0.35, -br*0.2, br*0.35, 0, 6.2832); ctx.fill();
+      ctx.beginPath(); ctx.arc(br*0.4, br*0.25, br*0.25, 0, 6.2832); ctx.fill();
+    }
+    else if(c1 === '#A9B3BE' || c1 === '#7FD8D0'){      // armoured/wind — a shard
+      ctx.fillStyle = c2;
+      ctx.beginPath();
+      ctx.moveTo(br*1.6, 0); ctx.lineTo(-br*0.8, br*0.7);
+      ctx.lineTo(-br*1.2, 0); ctx.lineTo(-br*0.8, -br*0.7);
+      ctx.closePath(); ctx.fill();
+    }
+    else {                                              // anything else — the old glow
+      const rad = Math.max(1, br*2 + Math.sin(bp)*1.5);
+      const g = ctx.createRadialGradient(0,0,0,0,0,Math.max(1,br*2));
+      g.addColorStop(0,c2); g.addColorStop(.5,c1); g.addColorStop(1,c1+'00');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(0, 0, rad, 0, 6.2832); ctx.fill();
+    }
+    ctx.restore();
   }
   ctx.globalCompositeOperation = 'source-over';
 
