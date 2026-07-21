@@ -103,6 +103,33 @@
   .mi:focus-visible::before,.mi:focus-visible::after{opacity:1;transform:translateY(-50%) scale(1)}
   .mi--primary{color:var(--gold);font-size:.95rem}
   .mi--coop{color:#8FB0FF}
+  .mp-wrap{width:100%;max-width:560px;margin:0 auto;text-align:center}
+  .mp-h{font-family:var(--display);font-size:1.7rem;margin:.2rem 0 1.6rem}
+  .mp-field{margin-bottom:1.2rem}
+  .mp-field input,#mp-join-code{background:rgba(0,0,0,.4);border:1px solid rgba(232,220,192,.2);
+    color:var(--parchment);font-family:var(--mono);font-size:.9rem;padding:.7rem .9rem;outline:none;text-align:center}
+  .mp-field input{width:100%}
+  .mp-field input:focus,#mp-join-code:focus{border-color:var(--gold)}
+  .mp-label{font-family:var(--mono);font-size:.58rem;letter-spacing:.2em;text-transform:uppercase;color:var(--bone);margin-bottom:.7rem}
+  .mp-orders{display:grid;grid-template-columns:repeat(3,1fr);gap:.45rem;margin-bottom:1.4rem}
+  .mp-ord{background:rgba(255,255,255,.02);border:1px solid rgba(232,220,192,.14);padding:.6rem .3rem;
+    cursor:pointer;transition:all .14s;display:flex;flex-direction:column;gap:.15rem}
+  .mp-ord:hover{border-color:var(--oc);transform:translateY(-2px)}
+  .mp-ord.on{border-color:var(--oc);background:rgba(255,255,255,.06)}
+  .mp-ord-n{font-family:var(--display);font-size:.9rem;font-weight:700}
+  .mp-ord-r{font-family:var(--mono);font-size:.5rem;letter-spacing:.14em;text-transform:uppercase;color:var(--bone)}
+  .mp-actions{display:flex;gap:.5rem;align-items:center;justify-content:center;flex-wrap:wrap}
+  .mp-or{font-family:var(--mono);font-size:.55rem;letter-spacing:.2em;color:var(--bone)}
+  #mp-join-code{width:130px;text-transform:uppercase}
+  .mp-code{font-family:var(--mono);font-size:2rem;letter-spacing:.4em;color:var(--gold);padding:.5rem 0}
+  .mp-peers{list-style:none;margin:1rem 0;font-family:var(--mono);font-size:.78rem;line-height:1.9}
+  .mp-status{font-family:var(--mono);font-size:.68rem;color:var(--bone);margin:1rem 0;min-height:1.2em}
+  .mp-status.err{color:#E0663D}
+  .mp-status.ok{color:#5FBF6F}
+  #mp-hud{position:absolute;top:12px;right:12px;font-family:var(--mono);font-size:.62rem;
+    background:rgba(6,5,10,.6);border:1px solid rgba(232,220,192,.14);padding:.5rem .7rem;line-height:1.7;min-width:140px}
+  #mp-hud .m-row{display:flex;justify-content:space-between;gap:.8rem}
+  #mp-hud .m-dead{opacity:.45;text-decoration:line-through}
   /* mode-select screen — same visual language as the main menu, one level deeper */
   .modes{display:flex;flex-direction:column;gap:1.6rem;max-width:880px;width:100%;
     max-height:62vh;overflow-y:auto;padding-right:.4rem;margin-top:1.2rem}
@@ -554,6 +581,7 @@
   .seedout b{color:var(--gold)}
   .hint{position:absolute;bottom:1.2rem;left:50%;transform:translateX(-50%);font-family:var(--mono);font-size:.6rem;letter-spacing:.24em;text-transform:uppercase;color:rgba(155,147,126,.5)}
 </style>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
 <div id="app">
@@ -582,6 +610,7 @@
     <div id="buffs"></div>
     <div id="abilbar"></div>
     <div id="itembar"></div>
+    <div id="mp-hud" class="hidden"></div>
     <canvas id="minimap" width="160" height="160"></canvas>
   </div>
 
@@ -602,6 +631,37 @@
   </div>
 
   <!-- CODEX HUB -->
+<div class="screen screen--solid hidden" id="screen-mp">
+    <div class="mp-wrap">
+      <div class="eyebrow">Hunt with Friends</div>
+      <h2 class="mp-h">Co-operative Hunt</h2>
+
+      <div id="mp-setup">
+        <div class="mp-field">
+          <input type="text" id="mp-name" placeholder="your name" maxlength="14" autocomplete="off">
+        </div>
+        <div class="mp-label">Choose your order</div>
+        <div class="mp-orders" id="mp-orders"></div>
+        <div class="mp-actions">
+          <button class="btn" id="mp-host">Create Room</button>
+          <span class="mp-or">or</span>
+          <input type="text" id="mp-join-code" placeholder="room code" maxlength="6" autocomplete="off">
+          <button class="btn btn--ghost" id="mp-join">Join</button>
+        </div>
+      </div>
+
+      <div id="mp-room" class="hidden">
+        <div class="mp-label">Room code — share it</div>
+        <div class="mp-code" id="mp-code">------</div>
+        <ul class="mp-peers" id="mp-peers"></ul>
+        <button class="btn" id="mp-begin">Begin the Hunt</button>
+      </div>
+
+      <div class="mp-status" id="mp-status"></div>
+      <button class="btn btn--ghost" id="mp-back">Back</button>
+    </div>
+  </div>
+
   <!-- HUNT WITH FRIENDS — mode select. Tiles are generated from GAME_MODES,
        so adding a future mode is one data entry plus a route. -->
   <div class="screen screen--solid hidden" id="screen-modes">
@@ -3052,6 +3112,7 @@ function spawnBoss(){
     c:B.c, c2:B.c2, alive:true, flash:0, kx:0, ky:0,
     elite:true, gen:0, ph:0,
     resist:B.resist, weak:B.weak,
+    id: ++_eid,
     fly:!!B.fly, ranged:!!B.spit, fireT:rnd(1,2),
     breath:!!B.breath, charge:!!B.charge, slam:!!B.slam,
     volley:!!B.volley, rain:!!B.rain, sweep:!!B.sweep, burrow:!!B.burrow,
@@ -5671,6 +5732,8 @@ function tickAbilities(dt){
 let _dmgSrc = null;
 function hit(e, dmg, c, type){
   if(e.untargetable) return;   // burrowed — it is under the ground, nothing to strike
+  // in co-op only the host may change an enemy's health; everyone else asks
+  if(typeof MP!=='undefined' && MP.on && !MP.isHost && !e.typhonHead){ mpReportHit(e, dmg, c, type); return; }
   let crit = SIM() < G.stats.crit;
   let d = dmg * (crit ? G.stats.critdmg : 1);
   // Forge's Sunder: stripped scale means every later wound bites deeper
@@ -5937,6 +6000,7 @@ function makeChampion(e){
   return e;
 }
 
+let _eid = 0;
 function mkDragon(key, x, y, gen=0){
   const t = DRAGONS[key];
   const shrink = Math.pow(0.50, gen);            // hydra children: weaker...
@@ -5953,6 +6017,7 @@ function mkDragon(key, x, y, gen=0){
     fireT: rnd(1.0, 2.6), charge:0, elite:false, ph:SIM()*6.28,
   };
   e.maxhp = e.hp;
+  e.id = ++_eid;                       // identity, so co-op snapshots can match
   // a split-off child is never a champion — that would compound endlessly
   if(gen === 0 && SIM() < CHAMPION.chance) makeChampion(e);
   return e;
@@ -5995,6 +6060,7 @@ function spawnEnemy(elite=false){
   else G.enemies.push(mkDragon(k,x,y));
 }
 function spawnTick(dt){
+  if(typeof MP!=='undefined' && MP.on && !MP.isHost) return;   // the host owns the world
   G.biomeT += dt;
   if(G.typhon) return;   // the finale is Typhon's fight — no swarm spawns
 
@@ -6044,6 +6110,15 @@ function spawnTick(dt){
 function update(dt){
   const p = G.p;
   G.t += dt;
+
+  // multiplayer: tell the others where I am, and (if host) mirror the world
+  if(typeof MP!=='undefined' && MP.on){
+    mpBroadcastSelf(dt);
+    if(MP.isHost){
+      MP.snapAcc = (MP.snapAcc||0) + dt;
+      if(MP.snapAcc >= 1/MP_SNAP_HZ){ MP.snapAcc = 0; mpSnapshot(); }
+    }
+  }
 
   // THE FINALE — at 10:00 Typhon rises. Victory is no longer surviving; it is
   // felling the Titan. (Spawns once; the fight itself decides the run.)
@@ -6109,6 +6184,13 @@ function update(dt){
   tickAbilities(dt);
 
   // enemies
+  if(typeof MP!=='undefined' && MP.on && !MP.isHost){
+    for(const e of G.enemies){
+      if(!e.alive || e.tx===undefined || e.typhonHead) continue;
+      e.x += (e.tx-e.x)*Math.min(1,dt*14);
+      e.y += (e.ty-e.y)*Math.min(1,dt*14);
+    }
+  }
   const cull = Math.max(W,H)*1.25;
   for(const e of G.enemies){
     if(!e.alive) continue;
@@ -6485,7 +6567,7 @@ function update(dt){
     else if(d < mag){ const pull = 520*(1 - d/mag) + 90; g.vx += (dx/d)*pull*dt*6; g.vy += (dy/d)*pull*dt*6; }
     g.vx *= Math.pow(0.06,dt); g.vy *= Math.pow(0.06,dt);
     g.x += g.vx*dt; g.y += g.vy*dt;
-    if(d < p.r+7){ g.dead = true; gainXP(g.v); }
+    if(d < p.r+7 && !(typeof MP!=='undefined' && MP.on && !MP.isHost)){ g.dead = true; gainXP(g.v); }
   }
   G.gems = G.gems.filter(g=>!g.dead);
 
@@ -6499,7 +6581,12 @@ function update(dt){
       // Solo: stop and choose, so a golden shard is never wasted on something
       // you didn't want. Co-op keeps auto-pickup — one player's menu must not
       // freeze the hunt for everyone else.
-      if(typeof MP!=='undefined' && MP.on) takeItem(it.def, it.rar);
+      if(typeof MP!=='undefined' && MP.on){
+        // announce the find to the whole party — everyone gets the choice
+        const msg={t:'relic', d:it.def.id, r:it.rar.id, n:MP.myName};
+        if(MP.isHost) mpSendAll(msg); else mpSendHost(msg);
+        openItemChoice(it.def, it.rar);
+      }
       else openItemChoice(it.def, it.rar);
     }
   }
@@ -6653,7 +6740,13 @@ function stateHash(){
 }
 
 /* --------------------------- PROGRESSION -------------------------------- */
-function gainXP(v){
+function gainXP(v, fromNet){
+  // co-op: only the host collects, and it announces the gain so the party
+  // levels together — one pause for everyone, never one each
+  if(typeof MP!=='undefined' && MP.on && !fromNet){
+    if(!MP.isHost) return;
+    mpSendAll({t:'ev',k:'xp',v});
+  }
   G.xp += v * (1 + G.stats.xp);
   while(G.xp >= G.xpNext){
     G.xp -= G.xpNext; G.lv++;
@@ -6708,7 +6801,8 @@ function dropItem(id){
    Co-op never opens this at all: one player's menu must not freeze everyone
    else's hunt, so joiners simply pick things up (still capped at five). */
 function openItemChoice(def, rar){
-  if(typeof MP!=='undefined' && MP.on){ takeItem(def, rar); return; }
+  // co-op: the prompt floats over a LIVE hunt — nobody's world pauses.
+  // (duplicates still stack silently through the branch below)
 
   const held    = G.itemSlots[def.id];
   const atCap   = held && held.stacks >= ITEM_STACK_CAP;
@@ -6731,7 +6825,8 @@ function openItemChoice(def, rar){
   // NOTE: deliberately NOT clearKeys() here. The loop already ignores input
   // while paused, and wiping keys you are still holding is what desynced the
   // game from your hands and left movement dead after closing the prompt.
-  G.paused = true;
+  // In co-op the world never pauses — the prompt floats over the live hunt.
+  if(!(typeof MP!=='undefined' && MP.on)) G.paused = true;
   const box = document.getElementById('itemchoice');
 
   // the satchel is full of five other relics — choose one to give up
@@ -7230,7 +7325,23 @@ function renderItemBar(){
       style="border-color:${r.c};color:${r.c}">${iconImg(d.id, r.c, 20)}${sl.stacks>1?`<span class="ct">${sl.stacks}</span>`:''}</div>`;
   }).join('');
 }
+function mpBanner(text,sub){ if(G) G.banner={text,sub:sub||'',life:3.5,max:3.5}; }
+function mpSyncHud(){
+  const el=document.getElementById('mp-hud');
+  if(!el) return;
+  if(!MP.on){ el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.innerHTML=[...MP.players.values()].map(p=>{
+    const E=ELEMENTS[p.el]||ELEMENTS[0];
+    const pct=p.maxhp?Math.max(0,Math.round(p.hp/p.maxhp*100)):0;
+    const me=p.id===MP.myId;
+    return `<div class="m-row${p.alive?'':' m-dead'}">
+      <span style="color:${E.c}">${p.name}${me?' •':''}</span>
+      <span>${p.alive?pct+'%':'down'}</span></div>`;
+  }).join('');
+}
 function syncHUD(){
+  mpSyncHud();
   const b = biome();
   document.getElementById('biome').textContent = b.name + (G.cleared ? `  ·  ${G.cleared} cleared` : '');
 
@@ -8686,6 +8797,7 @@ function drawMinimap(){
   }
 
   // [MP] friends — empty today, one loop away from working in co-op
+  if(typeof MP!=='undefined' && MP.on) mpDrawPlayers();
   if(G.friends) for(const f of G.friends){
     const q = plot(f.x, f.y);
     m.fillStyle = f.c || '#6FCB7A';
@@ -8826,7 +8938,7 @@ document.getElementById('btn-begin').onclick = ()=>{
 };
 
 /* ========================= SCREEN ROUTING =============================== */
-const SCREENS = ['screen-title','screen-modes','screen-codexhub','screen-select','screen-codex','screen-bestiary','screen-itemdex','screen-scores','screen-relics','screen-shrines','screen-settings'];
+const SCREENS = ['screen-title','screen-modes','screen-mp','screen-codexhub','screen-select','screen-codex','screen-bestiary','screen-itemdex','screen-scores','screen-relics','screen-shrines','screen-settings'];
 function show(id){
   for(const s of SCREENS) document.getElementById(s).classList.toggle('hidden', s !== id);
 }
@@ -9124,7 +9236,10 @@ function renderSettings(){
 /* ========================== MENU WIRING ================================= */
 /* Co-op lives in its own file (host-authoritative peer-to-peer multiplayer).
    Upload it alongside this one; change COOP_FILE if you name it differently. */
-const COOP_FILE = 'coop.html';
+/* ONE FILE. Solo and co-op live in the same build — the entire reason the
+   old co-op went stale is that it was a separate copy that drifted. With
+   MP.on === false every multiplayer branch is skipped and this is exactly
+   the solo game; the lobby simply flips MP.on for everyone in the room. */
 
 /* ==================== HUNT WITH FRIENDS — GAME MODES =====================
    The full roster from the game-modes spec. `route` is a URL for a playable
@@ -9133,7 +9248,7 @@ const COOP_FILE = 'coop.html';
    order tiles render. */
 const GAME_MODES = [
   { cat:'Co-op', modes:[
-    { id:'swarm',    name:'Swarm',            players:'2–6', route:COOP_FILE,
+    { id:'swarm',    name:'Swarm',            players:'2–6', lobby:true,
       desc:'The hunt as you know it — the endless swarm, faced together.' },
     { id:'bossrush', name:'Boss Rush',        players:'2–6',
       desc:'One colossal dragon. Phases, real raid roles, and an enrage timer.' },
@@ -9184,10 +9299,13 @@ function renderModes(){
     </div>`).join('');
   for(const btn of el.querySelectorAll('.mode-tile')){
     const m = GAME_MODES.flatMap(c=>c.modes).find(x=>x.id===btn.dataset.mode);
-    if(m && m.route) btn.onclick = ()=>{ location.href = m.route; };
+    if(m && m.lobby && typeof mpOpenLobby==='function'){ btn.onclick = ()=> mpOpenLobby(); }
+    else if(m && m.route) btn.onclick = ()=>{ location.href = m.route; };
   }
 }
 document.getElementById('btn-coop').onclick = ()=>{ show('screen-modes'); renderModes(); };
+// in the co-op file itself, the Swarm tile opens the lobby rather than reloading
+
 document.getElementById('btn-modes-back').onclick = ()=>{ show('screen-title'); };
 document.getElementById('btn-codexhub').onclick = ()=> show('screen-codexhub');
 document.getElementById('btn-hub-back').onclick  = ()=> show('screen-title');
@@ -9586,6 +9704,11 @@ function start(el, seed){
 }
 function gameOver(won){
   G.running = false;
+  if(typeof MP!=='undefined' && MP.on){
+    const msg={t:'ev',k:'fell',n:MP.myName};
+    if(MP.isHost) mpSendAll(msg); else mpSendHost(msg);
+    const me=MP.players.get(MP.myId); if(me) me.alive=false;
+  }
   // survival pays. every second alive is bounty; clearing the run is a big bonus.
   const survivalBounty = Math.round(G.t * 2);
   const victoryBonus = won ? 1000 : 0;
@@ -9843,6 +9966,322 @@ function saveScoreName(){
 
 resize();
 buildRing();
+
+/* =====================================================================
+   MULTIPLAYER LAYER
+   This file IS the single-player game. Nothing about the simulation has
+   been rewritten or re-tuned — the same dragons, arts, items, shrines,
+   bosses and Typhon finale run here exactly as they do solo.
+
+   The only change is WHO decides what happens:
+     - HOST  runs the untouched single-player simulation and broadcasts it.
+     - JOINER runs its own slayer and arts locally (so input feels instant)
+       but takes enemies, drops and world state from the host's snapshots,
+       and reports its damage rather than applying it.
+   With MP.on === false every branch below is skipped and the file behaves
+   as the ordinary solo game.
+   ===================================================================== */
+const MP = {
+  on:false, isHost:false, peer:null, roomCode:null, myId:null,
+  myName:'slayer', conns:new Map(), players:new Map(), seed:0,
+  started:false, snapAcc:0, elIndex:0,
+};
+const MP_SEND_HZ = 20, MP_SNAP_HZ = 10, MP_SNAP_RANGE = 1100;
+
+function mpCode(){
+  const ch='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s='';
+  for(let i=0;i<6;i++) s+=ch[Math.floor(Math.random()*ch.length)];
+  return s;
+}
+function mpPeerId(code){ return 'dslayers-v2-'+code; }
+function mpStatus(msg,cls){
+  const el=document.getElementById('mp-status');
+  if(el){ el.textContent=msg||''; el.className='mp-status'+(cls?' '+cls:''); }
+}
+function mpSendAll(m){ for(const c of MP.conns.values()) try{ c.send(m); }catch(e){} }
+function mpSendHost(m){ const c=MP.conns.get('host'); if(c) try{ c.send(m); }catch(e){} }
+function mpRelayExcept(id,m){ for(const [k,c] of MP.conns) if(k!==id) try{ c.send(m); }catch(e){} }
+
+function mpHost(){
+  if(typeof Peer==='undefined'){ mpStatus('multiplayer library did not load','err'); return; }
+  MP.on=true; MP.isHost=true; MP.roomCode=mpCode(); MP.myId='host';
+  MP.seed=(Math.random()*0xffffffff)>>>0;
+  mpStatus('opening room…');
+  MP.peer=new Peer(mpPeerId(MP.roomCode),{debug:1});
+  MP.peer.on('open',()=>{
+    mpAddPlayer({id:'host',name:MP.myName,el:MP.elIndex});
+    mpShowRoom(); mpStatus('room open — waiting for friends','ok');
+  });
+  MP.peer.on('connection',conn=>{
+    conn.on('open',()=>{
+      MP.conns.set(conn.peer,conn);
+      conn.on('data',d=>mpData(conn.peer,conn,d));
+      conn.on('close',()=>{ MP.players.delete(conn.peer); MP.conns.delete(conn.peer); mpRoster(); });
+    });
+  });
+  MP.peer.on('error',e=>mpStatus('connection error: '+e.type,'err'));
+}
+function mpJoin(code){
+  if(typeof Peer==='undefined'){ mpStatus('multiplayer library did not load','err'); return; }
+  MP.on=true; MP.isHost=false; MP.roomCode=code;
+  mpStatus('connecting to '+code+'…');
+  MP.peer=new Peer({debug:1});
+  MP.peer.on('open',pid=>{
+    const conn=MP.peer.connect(mpPeerId(code),{reliable:false});
+    let opened=false;
+    conn.on('open',()=>{
+      opened=true; MP.conns.set('host',conn);
+      conn.send({t:'hello',name:MP.myName,el:MP.elIndex});
+      conn.on('data',d=>mpData('host',conn,d));
+      conn.on('close',()=>mpStatus('lost the host','err'));
+    });
+    setTimeout(()=>{ if(!opened) mpStatus('no room found with code '+code,'err'); },6000);
+  });
+  MP.peer.on('error',e=>mpStatus(e.type==='peer-unavailable'?('no room '+code):('error: '+e.type),'err'));
+}
+function mpAddPlayer(p){
+  if(MP.players.has(p.id)) return;
+  MP.players.set(p.id,{ id:p.id, name:p.name, el:p.el|0,
+    x:0,y:0,tx:0,ty:0, hp:100,maxhp:100, alive:true, face:1, lv:1, kills:0, moving:false });
+  mpRoster();
+}
+function mpRosterArr(){ return [...MP.players.values()].map(p=>({id:p.id,name:p.name,el:p.el})); }
+function mpData(from,conn,d){
+  switch(d.t){
+    case 'hello':
+      mpAddPlayer({id:from,name:(d.name||'slayer').slice(0,14),el:d.el|0});
+      conn.send({t:'welcome',id:from,seed:MP.seed,roster:mpRosterArr()});
+      mpSendAll({t:'roster',roster:mpRosterArr()});
+      break;
+    case 'welcome':
+      MP.myId=d.id; MP.seed=d.seed;
+      for(const r of d.roster) mpAddPlayer(r);
+      mpShowRoom(); mpStatus('joined — waiting for the host','ok');
+      break;
+    case 'roster':
+      for(const r of d.roster) mpAddPlayer(r);
+      mpRoster();
+      break;
+    case 'begin': mpBegin(d.el, d.seed); break;
+    case 'pos': {
+      const p=MP.players.get(d.id);
+      if(p){ p.tx=d.x; p.ty=d.y; p.face=d.f; p.moving=!!d.m; p.hp=d.hp; p.maxhp=d.mh; p.alive=!!d.a; p.lv=d.lv; }
+      if(MP.isHost) mpRelayExcept(from,d);
+      break;
+    }
+    case 'hit':  if(MP.isHost) mpHostHit(d); break;
+    case 'relic': {
+      if(MP.isHost) mpRelayExcept(from,d);
+      const def=ITEMS.find(z=>z.id===d.d), rar=RARITY.find(z=>z.id===d.r);
+      if(def&&rar&&G&&G.running){
+        if(G.banner==null||G.banner.life<0.5) G.banner={text:(d.n||'a slayer')+' FOUND A RELIC',sub:def.name+' — yours to take or leave',life:2.5,max:2.5};
+        openItemChoice(def, rar);
+      }
+      break;
+    }
+    case 'snap': mpApplySnap(d); break;
+    case 'ev':   mpEvent(d); if(MP.isHost) mpRelayExcept(from,d); break;
+    case 'ready':
+      if(MP.isHost){ MP.ready=(MP.ready||new Set()); MP.ready.add(d.id); mpCheckReady(); }
+      break;
+  }
+}
+function mpEvent(d){
+  if(!G) return;
+  switch(d.k){
+    case 'xp': gainXP(d.v, true); break;
+    case 'say': G.banner={text:d.h,sub:d.s,life:3.5,max:3.5}; break;
+    case 'fell': G.banner={text:(d.n||'a slayer')+' HAS FALLEN',sub:'hold the line',life:3.5,max:3.5}; break;
+    case 'rose': G.banner={text:(d.n||'a slayer')+' RETURNS',sub:'the shrine gives back',life:3,max:3}; break;
+  }
+}
+function mpRoster(){
+  const ul=document.getElementById('mp-peers');
+  if(!ul) return;
+  ul.innerHTML=[...MP.players.values()].map(p=>{
+    const el=ELEMENTS[p.el]||ELEMENTS[0];
+    return `<li style="color:${el.c}">${p.name}${p.id===MP.myId?' (you)':''} — ${el.name}</li>`;
+  }).join('');
+}
+
+/* ---- SNAPSHOTS. The host mirrors its authoritative world to everyone. ---- */
+function mpSnapshot(){
+  if(!MP.on || !MP.isHost || !G || !G.running) return;
+  const live=G.enemies.filter(e=>e.alive && !e.typhonHead);   // the finale is local
+  const players=[...MP.players.values()].map(p=>[p.id,Math.round(p.hp),p.alive?1:0]);
+  for(const [pid,conn] of MP.conns){
+    const who=MP.players.get(pid);
+    const near=who ? live.filter(e=>Math.abs(e.x-who.x)<MP_SNAP_RANGE && Math.abs(e.y-who.y)<MP_SNAP_RANGE)
+                   : live.slice(0,120);
+    try{
+      conn.send({
+        t:'snap',
+        e:near.slice(0,150).map(e=>[e.id,Math.round(e.x),Math.round(e.y),e.key,Math.round(e.hp),
+                                    e.elite?1:0, e.boss?1:0, e.flash>0?1:0, e.champion?1:0]),
+        gm:G.gems.slice(0,120).map(g=>[Math.round(g.x),Math.round(g.y),g.v]),
+        dr:G.drops.slice(0,40).map(it=>[it.id,Math.round(it.x),Math.round(it.y),it.def.id,it.rar.id]),
+        eb:G.ebullets.slice(0,60).map(b=>[Math.round(b.x),Math.round(b.y),b.r,b.c]),
+        gt:Math.round(G.t*10)/10, bi:G.biome, kl:G.kills,
+        p:players,
+      });
+    }catch(err){
+      if(!MP._warned){ MP._warned=true; console.error('snapshot failed',err); }
+    }
+  }
+}
+// joiners rebuild the world from what the host sent
+function mpApplySnap(d){
+  if(MP.isHost || !G) return;
+  const seen=new Set();
+  for(const [id,x,y,key,hp,elite,boss,flash,champ] of d.e){
+    seen.add(id);
+    let e=G.enemies.find(q=>q.id===id);
+    if(!e){
+      if(DRAGONS[key]){
+        e=mkDragon(key,x,y);
+        e.champion = false;              // the flag below decides, not the local roll
+        if(champ && !e.champion) makeChampion(e);
+      } else if(BOSSES[key]){
+        // the new game's bosses aren't DRAGONS — rebuild a render-faithful shell
+        const B=BOSSES[key];
+        e={ key, boss:true, name:B.name, x, y, r:B.r*CFG.CREATURE_SIZE,
+            hp, maxhp:hp, sp:0, dmg:B.dmg, xp:0, gold:0, gems:0,
+            c:B.c, c2:B.c2, alive:true, flash:0, kx:0, ky:0, elite:true, gen:0,
+            ph:Math.random()*6.28, resist:B.resist, weak:B.weak, fly:!!B.fly,
+            ranged:false, fireT:99, serpent:!!B.serpent };
+      } else continue;
+      e.id=id; e.elite=!!elite; e.boss=!!boss || e.boss;
+      G.enemies.push(e);
+    }
+    e.tx=x; e.ty=y; e.hp=hp; e.alive=true; e.flash=flash?0.1:e.flash;
+  }
+  // never cull local Typhon heads — they are not in the host's snapshot
+  for(const e of G.enemies) if(!seen.has(e.id) && !e.typhonHead) e.alive=false;
+  G.enemies=G.enemies.filter(e=>e.alive);
+  // gems, drops and enemy fire are visual for joiners; the host owns collection
+  G.gems=(d.gm||[]).map(([x,y,v])=>({x,y,v,vx:0,vy:0}));
+  G.drops=(d.dr||[]).map(([id,x,y,did,rid])=>({
+    id, x, y, ph:0, def:ITEMS.find(z=>z.id===did)||ITEMS[0], rar:RARITY.find(z=>z.id===rid)||RARITY[0] }));
+  G.ebullets=(d.eb||[]).map(([x,y,r,c])=>({x,y,r,c,vx:0,vy:0,life:1,ph:0}));
+  if(Number.isFinite(d.gt)) G.t=d.gt;
+  if(Number.isFinite(d.bi)) G.biome=d.bi;
+  if(Number.isFinite(d.kl)) G.kills=d.kl;
+  for(const [id,hp,alive] of (d.p||[])){
+    const p=MP.players.get(id);
+    if(p && id!==MP.myId){ p.hp=hp; p.alive=!!alive; }
+  }
+}
+// joiners tell the host they hit something; the host is the only one who applies it
+function mpReportHit(e,dmg,c,type){
+  mpSendHost({t:'hit',id:e.id,d:Math.round(dmg*10)/10,ty:type});
+}
+function mpHostHit(d){
+  const e=G.enemies.find(q=>q.id===d.id);
+  if(e && e.alive) hit(e,d.d,'#ffffff',d.ty);
+}
+// broadcast my own slayer so the others can draw me
+let mpPosAcc=0;
+function mpBroadcastSelf(dt){
+  if(!MP.on || !G || !G.p) return;
+  mpPosAcc+=dt;
+  if(mpPosAcc<1/MP_SEND_HZ) return;
+  mpPosAcc=0;
+  const p=G.p;
+  const msg={t:'pos',id:MP.myId,x:Math.round(p.x),y:Math.round(p.y),f:p.face,
+             m:(Math.abs(p.vx)+Math.abs(p.vy)>12)?1:0,
+             hp:Math.round(p.hp),mh:Math.round(p.maxhp),a:G.running?1:0,lv:G.lv};
+  if(MP.isHost) mpSendAll(msg); else mpSendHost(msg);
+}
+// remote slayers, drawn with the real player sprite in their own order's colours
+function mpDrawPlayers(){
+  if(!MP.on) return;
+  for(const p of MP.players.values()){
+    if(p.id===MP.myId) continue;
+    const el=ELEMENTS[p.el]||ELEMENTS[0];
+    if(Math.abs(p.x-G.cam.x)>W/2+90||Math.abs(p.y-G.cam.y)>H/2+90) continue;
+    p.x+=(p.tx-p.x)*0.25; p.y+=(p.ty-p.y)*0.25;
+    if(!p.alive){
+      ctx.save(); ctx.globalAlpha=.45; ctx.strokeStyle=el.c; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(p.x,p.y,14,0,6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p.x-7,p.y-7); ctx.lineTo(p.x+7,p.y+7);
+      ctx.moveTo(p.x+7,p.y-7); ctx.lineTo(p.x-7,p.y+7); ctx.stroke(); ctx.restore();
+      ctx.font='600 11px Georgia,serif'; ctx.textAlign='center';
+      ctx.fillStyle=el.c+'AA'; ctx.fillText(p.name+' — fallen',p.x,p.y-24);
+      continue;
+    }
+    const def=pickPlayerSprite(el);
+    const scale=(G.p.r*2.4)/(def.w*def.cell);
+    ctx.fillStyle='rgba(0,0,0,.35)';
+    ctx.beginPath(); ctx.ellipse(p.x,p.y+13,12,4,0,0,6.2832); ctx.fill();
+    ctx.save();
+    ctx.translate(p.x,0); ctx.scale(p.face>=0?1:-1,1); ctx.translate(-p.x,0);
+    drawSprite(def, p.moving?((G.t*7|0)&1):0, p.x, p.y, playerPalette(el), scale, false);
+    ctx.restore();
+    if(p.hp<p.maxhp){
+      const w=30,k=Math.max(0,p.hp/p.maxhp);
+      ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(p.x-w/2,p.y-26,w,3);
+      ctx.fillStyle=k>.35?'#5FBF6F':'#C0503A'; ctx.fillRect(p.x-w/2,p.y-26,w*k,3);
+    }
+    ctx.font='600 12px Georgia,serif'; ctx.textAlign='center';
+    ctx.fillStyle=el.c2; ctx.fillText(p.name,p.x,p.y-32);
+  }
+}
+
+/* ---- LOBBY. Sits in front of the ordinary order-select screen. ---- */
+function mpOpenLobby(){
+  show('screen-mp');
+  const n=safeGet(NAME_KEY); if(n) document.getElementById('mp-name').value=n;
+  mpBuildOrders();
+}
+function mpBuildOrders(){
+  const g=document.getElementById('mp-orders');
+  g.innerHTML=ELEMENTS.map((el,i)=>`
+    <button class="mp-ord${i===MP.elIndex?' on':''}" data-i="${i}" style="--oc:${el.c}">
+      <span class="mp-ord-n" style="color:${el.c}">${el.name}</span>
+      <span class="mp-ord-r">${el.role}</span>
+    </button>`).join('');
+  g.querySelectorAll('.mp-ord').forEach(b=>{
+    b.onclick=()=>{ MP.elIndex=+b.dataset.i; mpBuildOrders();
+      if(MP.on&&MP.myId){ const me=MP.players.get(MP.myId); if(me){ me.el=MP.elIndex;
+        if(MP.isHost) mpSendAll({t:'roster',roster:mpRosterArr()}); else mpSendHost({t:'hello',name:MP.myName,el:MP.elIndex}); }
+        mpRoster(); } };
+  });
+}
+function mpShowRoom(){
+  document.getElementById('mp-setup').classList.add('hidden');
+  document.getElementById('mp-room').classList.remove('hidden');
+  document.getElementById('mp-code').textContent=MP.roomCode;
+  document.getElementById('mp-begin').classList.toggle('hidden',!MP.isHost);
+  mpRoster();
+}
+// the host starts the hunt for everyone
+function mpBeginAll(){
+  const seed=MP.seed;
+  mpSendAll({t:'begin',seed});
+  mpBegin(MP.elIndex,seed);
+}
+function mpBegin(elIdx,seed){
+  MP.started=true;
+  document.getElementById('screen-mp').classList.add('hidden');
+  // hand off to the ORDINARY start() — the same game, same seed for everyone
+  start(ELEMENTS[MP.elIndex], seed);
+}
+
+
+document.getElementById('mp-back').onclick = ()=>{ show('screen-modes'); renderModes(); };
+document.getElementById('mp-host').onclick = ()=>{
+  MP.myName=(document.getElementById('mp-name').value||'').trim().slice(0,14)||'slayer';
+  safeSet(NAME_KEY, MP.myName); mpHost();
+};
+document.getElementById('mp-join').onclick = ()=>{
+  const code=(document.getElementById('mp-join-code').value||'').trim().toUpperCase();
+  if(code.length<4){ mpStatus('enter a room code first','err'); return; }
+  MP.myName=(document.getElementById('mp-name').value||'').trim().slice(0,14)||'slayer';
+  safeSet(NAME_KEY, MP.myName); mpJoin(code);
+};
+document.getElementById('mp-begin').onclick = ()=> mpBeginAll();
+document.getElementById('mp-join-code').addEventListener('input',e=>{ e.target.value=e.target.value.toUpperCase(); });
+
 
 </script>
 </body>
