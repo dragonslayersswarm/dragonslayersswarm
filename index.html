@@ -143,7 +143,7 @@
   .mode-tile.locked{cursor:default;opacity:.55}
   .mode-tile.locked:hover{border-color:rgba(232,220,192,.14);box-shadow:none}
   .mode-nm{font-family:var(--display);font-size:1.02rem;font-weight:700;color:var(--parchment);
-    letter-spacing:.04em;margin-bottom:.25rem}
+    letter-spacing:.04em;margin-bottom:.25rem;padding-right:5.2rem}
   .mode-ds{font-size:.78rem;line-height:1.45;color:var(--bone);margin-bottom:.45rem}
   .mode-meta{font-family:var(--mono);font-size:.55rem;letter-spacing:.14em;text-transform:uppercase;color:#8FB0FF}
   .mode-tile.locked .mode-meta{color:var(--bone)}
@@ -640,8 +640,6 @@
         <div class="mp-field">
           <input type="text" id="mp-name" placeholder="your name" maxlength="14" autocomplete="off">
         </div>
-        <div class="mp-label">Choose your order</div>
-        <div class="mp-orders" id="mp-orders"></div>
         <div class="mp-actions">
           <button class="btn" id="mp-host">Create Room</button>
           <span class="mp-or">or</span>
@@ -653,6 +651,9 @@
       <div id="mp-room" class="hidden">
         <div class="mp-label">Room code — share it</div>
         <div class="mp-code" id="mp-code">------</div>
+        <div class="mp-label" style="margin-top:1.1rem">Your order</div>
+        <div class="mp-picked" id="mp-picked" style="font-family:var(--display);font-size:1.15rem;font-weight:700;margin:.3rem 0 .7rem"></div>
+        <button class="btn btn--ghost" id="mp-pick-order">Choose your Order</button>
         <ul class="mp-peers" id="mp-peers"></ul>
         <button class="btn" id="mp-begin">Begin the Hunt</button>
       </div>
@@ -9290,8 +9291,8 @@ function renderModes(){
     <div>
       <div class="mode-cat">${cat.cat}</div>
       <div class="mode-grid">${cat.modes.map(m=>`
-        <button class="mode-tile${m.route?'':' locked'}" data-mode="${m.id}">
-          ${m.route?'':'<span class="mode-soon">In the Forge</span>'}
+        <button class="mode-tile${(m.route||m.lobby)?'':' locked'}" data-mode="${m.id}">
+          ${(m.route||m.lobby)?'':'<span class="mode-soon">In the Forge</span>'}
           <div class="mode-nm">${m.name}</div>
           <div class="mode-ds">${m.desc}</div>
           <div class="mode-meta">${m.players} players · ${cat.cat}</div>
@@ -9533,7 +9534,12 @@ document.getElementById('btn-relics-back').onclick    = ()=> show('screen-codexh
 document.getElementById('btn-shrines-back').onclick   = ()=> show('screen-codexhub');
 document.getElementById('btn-savescore').onclick      = ()=> saveScoreName();
 document.getElementById('btn-settings-back').onclick  = ()=> closeSettings();
-document.getElementById('btn-select-back').onclick    = ()=> show('screen-title');
+document.getElementById('btn-select-back').onclick    = ()=>{
+  if(typeof MP!=='undefined' && MP.on && MP.pickingOrder){
+    MP.pickingOrder=false; show('screen-mp'); mpShowRoom(); return;
+  }
+  show('screen-title');
+};
 
 addEventListener('keydown', e => {
   if(e.key !== 'Escape') return;
@@ -9670,6 +9676,17 @@ function renderCodex(){
     </div>`;
 }
 document.getElementById('btn-start').onclick = ()=>{
+  if(typeof MP!=='undefined' && MP.on && MP.pickingOrder){
+    // co-op: the oath commits your order to the ROOM — the hunt starts later
+    MP.pickingOrder = false;
+    MP.elIndex = selected;
+    const me = MP.players.get(MP.myId);
+    if(me){ me.el = MP.elIndex;
+      if(MP.isHost) mpSendAll({t:'roster',roster:mpRosterArr()});
+      else mpSendHost({t:'hello',name:MP.myName,el:MP.elIndex}); }
+    show('screen-mp'); mpShowRoom(); mpBuildOrders();
+    return;
+  }
   start(ELEMENTS[selected]);   // random seed; shown on the game-over screen
 };
 document.getElementById('btn-again').onclick = ()=>{
@@ -10234,7 +10251,13 @@ function mpOpenLobby(){
   mpBuildOrders();
 }
 function mpBuildOrders(){
+  // the 9-button grid is gone — order is chosen on the REAL Nine-Orders ring
+  // (the same screen solo uses); this only refreshes the label in the room
+  const lbl=document.getElementById('mp-picked');
+  if(lbl){ const el=ELEMENTS[MP.elIndex]||ELEMENTS[0];
+    lbl.textContent=el.name+' — '+el.role; lbl.style.color=el.c; }
   const g=document.getElementById('mp-orders');
+  if(!g) return;
   g.innerHTML=ELEMENTS.map((el,i)=>`
     <button class="mp-ord${i===MP.elIndex?' on':''}" data-i="${i}" style="--oc:${el.c}">
       <span class="mp-ord-n" style="color:${el.c}">${el.name}</span>
@@ -10280,6 +10303,10 @@ document.getElementById('mp-join').onclick = ()=>{
   safeSet(NAME_KEY, MP.myName); mpJoin(code);
 };
 document.getElementById('mp-begin').onclick = ()=> mpBeginAll();
+document.getElementById('mp-pick-order').onclick = ()=>{
+  MP.pickingOrder = true;
+  show('screen-select');
+};
 document.getElementById('mp-join-code').addEventListener('input',e=>{ e.target.value=e.target.value.toUpperCase(); });
 
 
