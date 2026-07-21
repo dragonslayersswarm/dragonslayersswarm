@@ -28,7 +28,15 @@
       radial-gradient(900px 600px at 50% 100%, var(--oxblood) 0%, transparent 65%),
       var(--ink);
   }
-  #app{position:relative;width:100%;height:100%;max-width:1400px;max-height:900px}
+  /* THE BUG: #app was capped at max-width:1400px;max-height:900px, centered
+     by body's flexbox. On ANY monitor larger than that — which is most
+     modern displays (1920x1080, 2560x1440, ultrawide) — the game rendered in
+     a fixed-size box floating in the middle of the window, with empty
+     gradient filling the rest. It never grew with the window. That reads
+     exactly as "the game keeps getting smaller": the actual play area stays
+     a fixed size while everything around it makes it look shrunken. The
+     game now genuinely fills the browser window on any screen. */
+  #app{position:relative;width:100%;height:100%}
   canvas{display:block;width:100%;height:100%;image-rendering:auto}
 
   .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:20}
@@ -95,8 +103,29 @@
   .mi:focus-visible::before,.mi:focus-visible::after{opacity:1;transform:translateY(-50%) scale(1)}
   .mi--primary{color:var(--gold);font-size:.95rem}
   .mi--coop{color:#8FB0FF}
-  .mi--coop::after{content:'·  2–6 players';font-family:var(--mono);font-size:.5rem;letter-spacing:.16em;
-    color:var(--bone);margin-left:.6rem;vertical-align:middle}
+  /* mode-select screen — same visual language as the main menu, one level deeper */
+  .modes{display:flex;flex-direction:column;gap:1.6rem;max-width:880px;width:100%;
+    max-height:62vh;overflow-y:auto;padding-right:.4rem;margin-top:1.2rem}
+  .mode-cat{font-family:var(--mono);font-size:.62rem;letter-spacing:.3em;text-transform:uppercase;
+    color:var(--gold);border-bottom:1px solid rgba(201,162,39,.25);padding-bottom:.4rem;margin-bottom:.7rem}
+  .mode-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:.7rem}
+  .mode-tile{position:relative;text-align:left;background:rgba(12,10,18,.72);
+    border:1px solid rgba(232,220,192,.14);padding:.85rem .95rem;cursor:pointer;
+    font-family:var(--body);transition:border-color .15s, box-shadow .15s}
+  .mode-tile:hover{border-color:var(--gold);box-shadow:0 0 22px rgba(201,162,39,.18)}
+  .mode-tile.locked{cursor:default;opacity:.55}
+  .mode-tile.locked:hover{border-color:rgba(232,220,192,.14);box-shadow:none}
+  .mode-nm{font-family:var(--display);font-size:1.02rem;font-weight:700;color:var(--parchment);
+    letter-spacing:.04em;margin-bottom:.25rem}
+  .mode-ds{font-size:.78rem;line-height:1.45;color:var(--bone);margin-bottom:.45rem}
+  .mode-meta{font-family:var(--mono);font-size:.55rem;letter-spacing:.14em;text-transform:uppercase;color:#8FB0FF}
+  .mode-tile.locked .mode-meta{color:var(--bone)}
+  .mode-soon{position:absolute;top:.6rem;right:.7rem;font-family:var(--mono);font-size:.5rem;
+    letter-spacing:.18em;text-transform:uppercase;color:var(--gold);border:1px solid rgba(201,162,39,.4);
+    padding:.15rem .4rem}
+  /* the old '2–6 players' ::after label was removed: the button now opens the
+     mode-select screen, where every mode shows its own player count — and the
+     absolutely-positioned label overlapped the button text on hover. */
   .mi--quit{color:rgba(155,147,126,.5);font-size:.72rem;margin-top:.9rem}
 
   .btn--ghost{border-color:rgba(232,220,192,.28);color:var(--bone)}
@@ -573,6 +602,18 @@
   </div>
 
   <!-- CODEX HUB -->
+  <!-- HUNT WITH FRIENDS — mode select. Tiles are generated from GAME_MODES,
+       so adding a future mode is one data entry plus a route. -->
+  <div class="screen screen--solid hidden" id="screen-modes">
+    <h1 style="font-size:clamp(1.6rem,4vw,2.8rem)">Hunt <span class="sub">with Friends</span></h1>
+    <div class="rule"></div>
+    <p class="lede">Twelve hunts, one order. Choose how you and yours take the field.</p>
+    <div class="modes" id="modes-body"></div>
+    <nav class="menu" style="margin-top:1.4rem">
+      <button class="mi mi--quit" id="btn-modes-back">Back</button>
+    </nav>
+  </div>
+
   <div class="screen screen--solid hidden" id="screen-codexhub">
     <h1 style="font-size:clamp(1.6rem,4vw,2.8rem)">Codex <span class="sub">&amp; Relics</span></h1>
     <div class="rule"></div>
@@ -1116,7 +1157,7 @@ const KITS = {
       desc:'A small storm, anchored, furious.',
       base:{ dmg:9, cd:2.6, size:105, dur:4.0 }, fits:['dmg','cd','size','dur'] },
     { id:'lightning_balllightning', name:'Ball Lightning', shape:'minion', behav:'minionDetonateHit',
-      desc:'It drifts. It chooses. It touches.',
+      desc:'It drifts. It chooses. It touches. Speed is how fast it can close on you or a target — it never sits still.',
       base:{ dmg:20, cd:1.6, count:1, speed:170 }, fits:['dmg','cd','count','speed'] },
     { id:'lightning_iontrail', name:'Ion Trail', shape:'trail', behav:'trailOverload',
       desc:'The air behind you has not recovered yet.',
@@ -1246,13 +1287,42 @@ const ROLE_TUNE = {
   'Skirmisher': { dmg:1.00, cd:0.92, size:1.00 },
   'Warden':     { dmg:0.94, cd:1.06, size:1.10 },
 };
+
+/* PER-ORDER BALANCE CORRECTION.
+   Role alone did not explain the spread — Ember, Umbral and Storm are all
+   Ravagers yet measured 55k to 169k total damage over an identical 5-minute
+   run. The difference is kit composition: how often each order's arts fire
+   and how many dragons each cast touches. Rather than hand-tune 81 abilities,
+   this is a single measured correction per order, derived from that run and
+   applied at build time. Deliberately a partial correction (roughly the
+   square root of the gap) — these are chaotic systems and overcorrecting on
+   one sample is how you flip the problem rather than fix it.
+   Values come from sustained DPS against fixed dummies (one target, and a
+   pack of twelve) rather than total damage over a run — total damage rewards
+   whoever CLEARS fastest, which is a feedback loop, not a measure of power.
+   That correction mattered: by total damage Ember looked strongest, but by
+   real DPS it has the LOWEST single-target output in the game. */
+const ORDER_TUNE = {
+  fire:      0.80,   // dummy DPS lowest single-target, but real-play clear rate was 2x the field — trimmed on live data
+  water:     1.15,   // 421 / 1521
+  nature:    1.50,   // 310 / 1131 — lowest pack damage
+  rock:      1.33,   // 380 / 1170
+  iron:      1.19,   // 615 / 1241
+  sky:       1.08,   // dummy-average, but 2nd-highest real clear rate: its damage CONNECTS (trails/zones cover its own movement) and its speed makes that safe
+  light:     1.44,   // 353 / 1196
+  shadow:    0.70,   // same pattern as sky — real clear rate far above its dummy numbers
+  lightning: 0.68,   // 654 / 3792 — 2.5x the pack damage of anything else.
+                     // Partial correction, not the full 0.34 the numbers imply:
+                     // Overload's chain behaviour needs its own look rather
+                     // than being buried under one blunt multiplier.
+};
 function buildAbilities(el){
   const kit = KITS[el.id];
   if(!kit) return [];
   const t = ROLE_TUNE[el.role] || ROLE_TUNE['Ravager'];
   return kit.abilities.map(a => {
     const b = { ...a.base };
-    b.dmg = Math.round(b.dmg * t.dmg * 10)/10;
+    b.dmg = Math.round(b.dmg * t.dmg * (ORDER_TUNE[el.id] || 1) * 10)/10;
     if(b.cd)   b.cd   = Math.round(b.cd * t.cd * 100)/100;
     if(b.size) b.size = Math.round(b.size * t.size);
     return { id:a.id, arch:a.shape, shape:a.shape, behav:a.behav, icon:(a.icon||a.shape),
@@ -1307,7 +1377,17 @@ const UPGRADES = [
     labelFor:a=>a.def.mastery },
 ];
 function upLabel(u,a){ return (u.labelFor ? u.labelFor(a) : u.label); }
-function upLabel(u,a){ return (u.labelFor ? u.labelFor(a) : u.label); }
+const UPGRADE_TIP = {
+  dmg:     "Raw damage dealt by this art, every time it hits.",
+  cd:      "How often this art fires. Lower cooldown, more casts per minute.",
+  size:    "The reach of this art — a bigger hitbox, ring, or line, shape depending.",
+  dur:     "How long the effect lasts before it expires.",
+  count:   "How many of this art exist or fire at once.",
+  pierce:  "How many extra dragons a single hit can pass through.",
+  speed:   "How fast this art's projectile, orbit, or familiar moves.",
+  mastery: "Your order's own signature stat — feeds directly into this art's resource mechanic.",
+};
+function upTip(u,a){ return UPGRADE_TIP[u.key] || ''; }
 
 /* ----------------------------- ITEMS ------------------------------------ */
 const ITEMS = [
@@ -1324,6 +1404,11 @@ const ITEMS = [
   { id:'magnet',   name:'Lodestone',            stat:'magnet',   v:.18, pct:true,  g:'❋' },
   { id:'xp',       name:"Sage's Tome",          stat:'xp',       v:.09, pct:true,  g:'❖' },
   { id:'regen',    name:'Verdant Charm',        stat:'regen',    v:.5,  pct:false, g:'✚' },
+  // grants a SECOND stat (stat2/v2/pct2) alongside the first — the only item
+  // that does. Each half is deliberately lighter than a dedicated relic's
+  // full value, since you're getting two effects from one slot.
+  { id:'bloodfang', name:'Bloodfang',            stat:'damage',   v:.05, pct:true,  g:'♦',
+    stat2:'lifesteal', v2:.022, pct2:true },
 ];
 
 /* ---- INSTANT POWER-UPS. Distinct from ITEMS (which are permanent stat
@@ -1372,6 +1457,7 @@ const RELIC = Object.fromEntries(RELICS.map(r=>[r.id,r]));
 const POWERUP_DROP_CHANCE = 0.012;   // per non-elite kill; bosses always drop one
 // human-readable names for the stats relics raise, used in the item codex
 const STAT_LABEL = {
+  lifesteal:'Lifesteal',
   damage:'Damage', haste:'Cast Speed', area:'Area', duration:'Duration',
   velocity:'Projectile Speed', move:'Move Speed', maxhp:'Max Health',
   armor:'Armour', crit:'Crit Chance', critdmg:'Crit Damage', magnet:'Pickup Range',
@@ -1394,6 +1480,7 @@ const ICON = {
   magnet:  ["dXX..XXd","dXX..XXd","dXX..XXd","dXXXXXXd","dXXXXXXd","d.oooo.d","d.o..o.d","d.oooo.d"], // horseshoe magnet
   xp:      ["...XX...","..XddX..",".Xd..dX.","Xd.oo.dX",".Xd..dX.","..XddX..","...XX...","........"], // gem
   regen:   ["...XX...","...XX...","...XX...","XXXXXXXX","XXXXXXXX","...XX...","...XX...","...XX..."], // cross
+  bloodfang: ["...XX...","..XXdX..","..XXXX..","..dXXd..","..dXXd..","...XX...","...oo...","........"], // a drop and a fang
   // boons
   pmagnet: ["dXX..XXd","dXX..XXd","dXXXXXXd","d.oooo.d","d.o..o.d","d.oooo.d","........","...oo..."],
   pheal:   [".XX.XX..","XXXXXXX.","XXXXXXX.","XXXXXXX.",".XXXXX..","..XXX...","...X....","........"],
@@ -1681,7 +1768,8 @@ const SHRINE_KEYS = ['charge','summon','revive','magnet'];
 const SHRINE_BLOCK = 900;   // large blocks — shrines are rare and spread out
 const SHRINE_R = 120;       // the activation ring radius
 function shrineAt(blockX, blockY){
-  const h = cellHash(blockX * 17 + 401, blockY * 17 + 733);
+  const sd = (G.seed||0) >>> 0;
+  const h = cellHash((blockX * 17 + 401) ^ sd, (blockY * 17 + 733) ^ (sd>>>1));
   if((h & 0xff) / 255 >= 0.14) return null;             // ~14% of blocks have a shrine
   const key = SHRINE_KEYS[(h >>> 8) % SHRINE_KEYS.length];
   const px = blockX * SHRINE_BLOCK + SHRINE_BLOCK/2 + (((h >>> 12) & 0xff) - 128);
@@ -1705,10 +1793,11 @@ const RELIC_BLOCK = 540;   // must match the graveyard BLOCK size (gs*6, gs=90)
    memorable find, not a supply line. */
 function relicAt(blockX, blockY){
   if(G.relicsClaimed && G.relicsClaimed.size >= 1) return null;
+  const sd = (G.seed||0) >>> 0;
   // is THIS graveyard block one that hides a relic?
-  const gh = cellHash(blockX * 7 + 101, blockY * 7 + 233);
+  const gh = cellHash((blockX * 7 + 101) ^ sd, (blockY * 7 + 233) ^ (sd>>>1));
   if((gh & 0xff) / 255 >= 0.06) return null;         // not a graveyard block
-  const rh = cellHash(blockX * 13 + 71, blockY * 13 + 197);
+  const rh = cellHash((blockX * 13 + 71) ^ sd, (blockY * 13 + 197) ^ (sd>>>2));
   if((rh & 0xff) / 255 > 0.45) return null;           // ~45% of graveyards hide one
   const relic = RELICS[(rh >>> 8) % RELICS.length];
   // fixed position within the block (deterministic)
@@ -1951,6 +2040,19 @@ function resize(){
   ctx.imageSmoothingEnabled = false;   // keep pixel sprites crisp, not blurred
 }
 addEventListener('resize', resize);
+/* Defensive: devicePixelRatio can change without a 'resize' event firing at
+   all — dragging the window between a retina and a standard monitor is the
+   common case — which would silently leave the canvas's backing buffer built
+   for the WRONG DPR. Catch it on the events most likely to coincide with
+   that, and as a cheap periodic safety net either way. */
+let _lastDPR = Math.min(devicePixelRatio||1, 2);
+function checkDPR(){
+  const d = Math.min(devicePixelRatio||1, 2);
+  if(d !== _lastDPR){ _lastDPR = d; resize(); }
+}
+addEventListener('orientationchange', ()=>{ resize(); checkDPR(); });
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkDPR(); });
+setInterval(checkDPR, 2000);
 
 const keys = {};
 addEventListener('keydown', e=>{
@@ -2034,7 +2136,7 @@ function newGame(el, seed){
     lv:1, xp:0, xpNext:12,
     p:{ x:0, y:0, vx:0, vy:0, r:13*CFG.CREATURE_SIZE, hp:el.hp, maxhp:el.hp, inv:0, face:1, hitflash:0 },
     stats:{ damage:0, haste:0, area:0, duration:0, velocity:0, move:0, maxhp:0,
-            armor:el.armor, crit:.05, critdmg:1.5, magnet:0, xp:0, regen:el.regen },
+            armor:el.armor, crit:.05, critdmg:1.5, magnet:0, xp:0, regen:el.regen, lifesteal:0 },
     items:{}, abilities:[],
     ranksSpent:0,                        // ability upgrade ranks used (cap: UPGRADE_BUDGET)
     rerolls:CFG.REROLLS, skips:CFG.SKIPS, // per-run draft economy
@@ -4356,8 +4458,18 @@ function fireArt(a){
       break;
     case 'momentumBolt': {   // sky: harder and faster the more you're carrying
       const m = (G.res||0)/(G.resMax||100);
+      /* THE RUNAWAY: this was mul = 1 + m*0.9*mastery(a) — mastery multiplied
+         the momentum bonus itself, an unbounded multiplier axis ON TOP of
+         normal damage mods. At a realistic rank-12 investment that measured
+         4.2x per bolt (175 vs 42 for an identical plain bolt), and a real
+         10-minute run showed Gale Dart at 9.5M damage — 83% of the entire
+         run. Mastery still deepens the bonus, but it now CAPS: full momentum
+         tops out at ~2.5x however far mastery is pushed. Baseline (no
+         mastery picks) is essentially unchanged, so the art's identity —
+         speed converts to damage — survives; only the runaway dies. */
+      const bonus = Math.min(1.5, 0.5 + 0.35*mastery(a));
       for(let i=0;i<A(a,'count');i++)
-        spawnArtBolt(a, ang+(i-(A(a,'count')-1)/2)*0.11, {mul:1+m*0.9*mastery(a)});
+        spawnArtBolt(a, ang+(i-(A(a,'count')-1)/2)*0.11, {mul:1+m*bonus});
       break;
     }
     case 'markBolt':    // light: always marks
@@ -4603,8 +4715,15 @@ function fireThreshold(a, e){
       if((G.res||0) < full*0.98) return;
       const pot = (G.res/full);
       G.res = 0;
+      /* The potency bonus was +50% at a full bar, on a nova that hits every
+         dragon in a wide radius. Measured, Discharge alone was 41% of Storm's
+         damage and pushed its pack DPS to 2.5x every other order — while its
+         single-target output sat BELOW average. Being the area specialist is
+         a fair identity; being 2.5x better at it than anyone is not. The
+         bonus is now +25%, which trims the burst without touching Storm's
+         eight other arts. */
       G.fx.push({ type:'nova', x:G.p.x, y:G.p.y, r:6, max:A(a,'size'), sp:680,
-                  dmg:A(a,'dmg')*(1+pot*0.5)*mastery(a), c:G.el.c2,
+                  dmg:A(a,'dmg')*(1+pot*0.25)*mastery(a), c:G.el.c2,
                   dtype:MAG, hitset:new Set(), srcId:a.def.id });
       G.shake = Math.max(G.shake, 8);
       break;
@@ -4614,8 +4733,13 @@ function fireThreshold(a, e){
 }
 
 /* ---- on-kill arts ---- */
+const ONKILL_CD = 0.35;   // minimum seconds between two firings of an on-kill art
 function onKillArts(e){
   for(const a of G.abilities){
+    if(a.def.shape === 'onkill'){
+      if((a.okT||0) > 0) continue;   // still on cooldown — skip this kill
+      a.okT = ONKILL_CD;
+    }
     _dmgSrc = a.def.id;
     switch(a.def.behav){
       case 'spreadOnKill':      // fire: Wildfire Chain
@@ -4672,7 +4796,9 @@ function tickSeeds(dt){
     sd.boost = 1;
     if(sd.t >= sd.grow){
       sd.done = true;
-      if(burstArt){
+      if(burstArt && (burstArt.thT||0) <= 0){
+        burstArt.thT = THRESHOLD_CD;   // Bloomburst bypassed fireThreshold, so
+                                       // the threshold rate limit never applied
         const r = A(burstArt,'size');
         G.fx.push({ type:'nova', x:sd.x, y:sd.y, r:6, max:r, sp:520,
                     dmg:A(burstArt,'dmg'), c:G.el.c2, dtype:MAG, hitset:new Set(), srcId:burstArt.def.id });
@@ -5520,7 +5646,10 @@ function applyZoneBehav(z, e){
 
 /* ---- master tick ---- */
 function tickAbilities(dt){
-  for(const a of G.abilities) if(a.thT > 0) a.thT -= dt;   // threshold rate limit
+  for(const a of G.abilities){
+    if(a.thT > 0) a.thT -= dt;   // threshold rate limit
+    if(a.okT > 0) a.okT -= dt;   // on-kill rate limit
+  }
   tickPlayerResource(dt);
   tickSeeds(dt);
   tickOrbits(dt);
@@ -5560,6 +5689,9 @@ function hit(e, dmg, c, type){
   if(type && e.resist === type){ d *= RESIST_MULT; mark = 'resist'; }
   else if(type && e.weak === type){ d *= WEAK_MULT; mark = 'weak'; }
   if(_dmgSrc && G.dmgBy) G.dmgBy[_dmgSrc] = (G.dmgBy[_dmgSrc]||0) + d;
+  if(G.stats.lifesteal > 0 && d > 0 && G.p.hp < G.p.maxhp){
+    G.p.hp = Math.min(G.p.maxhp, G.p.hp + d * G.stats.lifesteal);
+  }
   e.hp -= d;
   e.flash = 0.09;
   // guarded at the PUSH, not the draw — in a 600-enemy swarm this is the single
@@ -5611,9 +5743,24 @@ function hurtPlayer(amount, srcX, srcY, pierceInv){
    off the crowd control, so a boss fight never becomes a stun-lock. */
 
 
+/* CASCADE DEPTH GUARD.
+   kill() calls onKillArts(), which can hit a neighbour hard enough to kill
+   IT, and hit() calls kill() again — synchronously, nested. In a packed room
+   this was unbounded: one confirmed test killed a single dragon and it
+   cascaded through an entire 30-dragon pack in one call stack. That is also
+   the likely cause of "the boss died in 3 seconds" (Typhon's heads orbit
+   close enough to chain the same way) and of on-kill arts attributing
+   millions of damage over a run. Bounded to 3 levels: the first kill can
+   still trigger a satisfying spread, but it cannot devour a whole room. */
+let _killDepth = 0;
+const KILL_CASCADE_MAX = 3;
 function kill(e){
   e.alive = false;
-  if(G.abilities && G.abilities.length) onKillArts(e);
+  if(G.abilities && G.abilities.length && _killDepth < KILL_CASCADE_MAX){
+    _killDepth++;
+    onKillArts(e);
+    _killDepth--;
+  }
   // Typhon head — its own death handling (drops, respawn from pool)
   if(e.typhonHead){ onTyphonHeadKilled(e); return; }
   G.kills++;
@@ -6540,6 +6687,7 @@ function dropItem(id){
   const held = G.itemSlots[id];
   if(!held) return;
   G.stats[held.def.stat] -= held.contrib;
+  if(held.def.stat2) G.stats[held.def.stat2] -= (held.contrib2||0);
   if(held.def.stat === 'maxhp'){
     G.p.maxhp -= held.contrib;
     G.p.hp = Math.min(G.p.hp, G.p.maxhp);
@@ -6601,8 +6749,9 @@ function openItemChoice(def, rar){
         <div class="ic-icon">${iconImg(def.id, rar.c, 46)}</div>
         <div class="ic-rar" style="color:${rar.c}">${rar.name}</div>
         <div class="ic-nm">${def.name}</div>
-        <div class="ic-ds">${STAT_LABEL[def.stat]||def.stat}${full?` · satchel full (${ITEM_TYPE_CAP})`:` · ${ITEM_TYPE_CAP-itemTypeCount()} slot${ITEM_TYPE_CAP-itemTypeCount()===1?'':'s'} free`}</div>
+        <div class="ic-ds">${STAT_LABEL[def.stat]||def.stat}${def.stat2?` + ${STAT_LABEL[def.stat2]||def.stat2}`:''}${full?` · satchel full (${ITEM_TYPE_CAP})`:` · ${ITEM_TYPE_CAP-itemTypeCount()} slot${ITEM_TYPE_CAP-itemTypeCount()===1?'':'s'} free`}</div>
         <div class="ic-fx" style="color:${rar.c}">${shown} ${STAT_LABEL[def.stat]||def.stat}</div>
+        ${def.stat2?`<div class="ic-fx" style="color:${rar.c};opacity:.8">+${((def.v2*rar.m*mult)*100).toFixed(1)}% ${STAT_LABEL[def.stat2]}</div>`:''}
       </div>
       ${full ? `<div class="ic-full">Your satchel holds ${ITEM_TYPE_CAP} relics — give one up?</div>
                 <div class="ic-swaps">${swapList}</div>` : ''}
@@ -6638,7 +6787,8 @@ function takeItem(def, rar){
   if(!held){
     // first copy: full effect
     const amt = def.v * rar.m * stackContribution(1, false);
-    G.itemSlots[def.id] = { stacks:1, def, bestRar:rar, contrib:amt, lastRar:rar };
+    G.itemSlots[def.id] = { stacks:1, def, bestRar:rar, contrib:amt,
+      contrib2: def.stat2 ? def.v2 * rar.m * stackContribution(1,false) : 0, lastRar:rar };
     applyItemStat(def, rar.m);
     G.dmgnums.push({ x:G.p.x, y:G.p.y-30, v:def.name, life:1.3, txt:true, c:rar.c });
   } else {
@@ -6650,6 +6800,11 @@ function takeItem(def, rar){
     held.contrib += amt;
     G.stats[def.stat] += amt;                  // apply directly (can subtract)
     if(def.stat === 'maxhp'){ G.p.maxhp += amt; G.p.hp = Math.min(G.p.hp, G.p.maxhp); }
+    if(def.stat2){                              // Bloodfang's second half stacks too
+      const amt2 = def.v2 * mult;                  // same diminishing curve as the primary stat
+      held.contrib2 = (held.contrib2||0) + amt2;
+      G.stats[def.stat2] += amt2;
+    }
     held.lastRar = rar;
     if(RARITY.indexOf(rar) > RARITY.findIndex(r=>r.id===held.bestRar.id)) held.bestRar = rar;
     // tell the player what happened — including when it's now hurting them
@@ -6661,6 +6816,7 @@ function applyItemStat(def, mult){
   const amt = def.v * mult;
   G.stats[def.stat] += amt;
   if(def.stat === 'maxhp'){ G.p.maxhp += amt; G.p.hp += amt; }
+  if(def.stat2){ G.stats[def.stat2] += def.v2 * mult; }   // Bloodfang's second half
 }
 
 /* ---- CLAIM A HIDDEN RELIC. Grants a strong in-run boon AND records it to the
@@ -6986,7 +7142,9 @@ function openLevelUp(){
         <div class="tag">New Art · <span style="color:${tc}">${TYPE_LABEL[ty]}</span></div>
         <div class="nm">${o.def.name}</div>
         <div class="ds">${o.def.desc}</div>
-        <div class="fx">${o.def.base.dmg} dmg &nbsp;·&nbsp; ${o.def.base.cd}s cast</div>`;
+        <div class="fx">${o.def.base.dmg} dmg &nbsp;·&nbsp; ${
+          o.def.base.cd ? o.def.base.cd+'s cast' : (o.def.shape==='threshold' ? 'fires on trigger' : 'fires on kill')
+        }</div>`;
       b.onmouseenter = ()=>{ b.style.boxShadow = `0 0 34px ${c}44`; b.style.borderColor = c; };
       b.onmouseleave = ()=>{ b.style.boxShadow = 'none'; b.style.borderColor = c+'55'; };
       b.onclick = ()=>{ addAbility(o.def); closeLevelUp(); };
@@ -7001,7 +7159,7 @@ function openLevelUp(){
         <div class="rar" style="color:${o.rar.c}">${o.rar.name}</div>
         <div class="nm">${o.a.def.name}</div>
         <div class="ds">Rank ${o.a.lv} → ${o.a.lv+1}. ${o.a.def.desc}</div>
-        <div class="fx" style="color:${o.rar.c};border-top-color:${o.rar.c}33">${txt}</div>`;
+        <div class="fx" style="color:${o.rar.c};border-top-color:${o.rar.c}33" title="${upTip(o.u,o.a)}">${txt}</div>`;
       b.onmouseenter = ()=>{ b.style.boxShadow = `0 0 34px ${o.rar.c}44`; b.style.borderColor = o.rar.c; };
       b.onmouseleave = ()=>{ b.style.boxShadow = 'none'; b.style.borderColor = o.rar.c+'55'; };
       b.onclick = ()=>{
@@ -7060,10 +7218,16 @@ function renderItemBar(){
   const slots = Object.values(G.itemSlots);
   bar.innerHTML = slots.map(sl=>{
     const d = sl.def, r = sl.bestRar;
-    const over = sl.stacks > 5;   // past 5 copies the stack is hurting you
-    const tip = `${d.name} — ${sl.stacks}× · ${STAT_LABEL[d.stat]||d.stat}${over?' · TOO MANY (effect reduced)':''}`;
-    return `<div class="item${over?' item--over':''}" title="${tip}"
-      style="border-color:${over?'#C0503A':r.c};color:${over?'#C0503A':r.c}">${iconImg(d.id, over?'#C0503A':r.c, 20)}${sl.stacks>1?`<span class="ct">${sl.stacks}</span>`:''}</div>`;
+    // THE BUG: this referenced ">5 stacks = reduced effect", a penalty that
+    // no longer exists — relics cap at 5 and never go negative. It also never
+    // showed the actual number, just the stat's name, which is what was
+    // actually asked for: hover a relic, see what it is CURRENTLY giving you.
+    const fmt = (v, pct) => pct ? `+${(v*100).toFixed(1)}%` : `+${v.toFixed(1)}`;
+    let tip = `${d.name} — ${sl.stacks}★ · ${STAT_LABEL[d.stat]||d.stat} ${fmt(sl.contrib, d.pct)}`;
+    if(d.stat2) tip += ` · ${STAT_LABEL[d.stat2]||d.stat2} ${fmt(sl.contrib2||0, d.pct2)}`;
+    if(sl.stacks >= ITEM_STACK_CAP) tip += ' · mastered';
+    return `<div class="item" title="${tip}"
+      style="border-color:${r.c};color:${r.c}">${iconImg(d.id, r.c, 20)}${sl.stacks>1?`<span class="ct">${sl.stacks}</span>`:''}</div>`;
   }).join('');
 }
 function syncHUD(){
@@ -7403,6 +7567,72 @@ function render(){
       ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 6.2832); ctx.stroke();
       ctx.fillStyle = f.c + '33';
       ctx.beginPath(); ctx.arc(f.x, f.y, f.r*k, 0, 6.2832); ctx.fill();
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+    else if(f.type==='cone'){
+      /* DRAGON'S MAW — a breath of fire, not a flat wedge.
+         Built in layers so it reads as something being EXHALED: a hot core
+         near the mouth fading to smoke at the edge, rolling flame tongues
+         along the spread, and embers riding the front. The whole thing surges
+         outward over its short life rather than just fading. */
+      const k = f.life / f.max;          // 1 at cast -> 0 at the end
+      const surge = 1 - k;               // how far the breath has travelled
+      const reach = f.r * (0.55 + surge*0.45);
+      const a0 = f.ang - f.spread, a1 = f.ang + f.spread;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+
+      // 1. the body of the breath — hot at the mouth, thinning outward
+      const g = ctx.createRadialGradient(f.x, f.y, 4, f.x, f.y, reach);
+      g.addColorStop(0,   '#FFF0B8');
+      g.addColorStop(0.18,'#FFC46B');
+      g.addColorStop(0.45,'#FF6B2C');
+      g.addColorStop(0.75,'#C0341688');
+      g.addColorStop(1,   '#5C160800');
+      ctx.globalAlpha = k * fxA;
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.moveTo(f.x,f.y);
+      ctx.arc(f.x, f.y, reach, a0, a1); ctx.closePath(); ctx.fill();
+
+      // 2. rolling tongues of flame across the spread
+      const tongues = 7;
+      for(let i=0;i<tongues;i++){
+        const t  = i/(tongues-1);
+        const ta = a0 + (a1-a0)*t;
+        const wob = Math.sin(G.t*11 + i*1.9) * 0.055;
+        const len = reach * (0.62 + 0.3*Math.sin(i*2.1 + G.t*7));
+        ctx.globalAlpha = k * fxA * 0.75;
+        ctx.fillStyle = i%2 ? '#FF8C3A' : '#FFC46B';
+        ctx.beginPath();
+        ctx.moveTo(f.x, f.y);
+        ctx.quadraticCurveTo(
+          f.x + Math.cos(ta+wob)*len*0.55, f.y + Math.sin(ta+wob)*len*0.55,
+          f.x + Math.cos(ta)*len,          f.y + Math.sin(ta)*len);
+        ctx.quadraticCurveTo(
+          f.x + Math.cos(ta-wob)*len*0.5,  f.y + Math.sin(ta-wob)*len*0.5,
+          f.x, f.y);
+        ctx.fill();
+      }
+
+      // 3. embers riding the leading edge
+      for(let i=0;i<9;i++){
+        const ea = a0 + (a1-a0)*_vseed(f.x,f.y,i);
+        const er = reach * (0.75 + _vseed(f.x,f.y,i+20)*0.3);
+        ctx.globalAlpha = k * fxA;
+        ctx.fillStyle = i%3 ? '#FFC46B' : '#FFF0B8';
+        ctx.beginPath();
+        ctx.arc(f.x + Math.cos(ea)*er, f.y + Math.sin(ea)*er, 1.6 + _vseed(f.x,f.y,i+40)*2, 0, 6.2832);
+        ctx.fill();
+      }
+
+      // 4. the mouth itself — a bright throat where the breath leaves
+      ctx.globalAlpha = k * fxA;
+      const mg = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 16);
+      mg.addColorStop(0,'#FFFFFF'); mg.addColorStop(0.5,'#FFC46B'); mg.addColorStop(1,'#FF6B2C00');
+      ctx.fillStyle = mg;
+      ctx.beginPath(); ctx.arc(f.x, f.y, 16, 0, 6.2832); ctx.fill();
+
       ctx.restore();
       ctx.globalAlpha = 1;
     }
@@ -8596,7 +8826,7 @@ document.getElementById('btn-begin').onclick = ()=>{
 };
 
 /* ========================= SCREEN ROUTING =============================== */
-const SCREENS = ['screen-title','screen-codexhub','screen-select','screen-codex','screen-bestiary','screen-itemdex','screen-scores','screen-relics','screen-shrines','screen-settings'];
+const SCREENS = ['screen-title','screen-modes','screen-codexhub','screen-select','screen-codex','screen-bestiary','screen-itemdex','screen-scores','screen-relics','screen-shrines','screen-settings'];
 function show(id){
   for(const s of SCREENS) document.getElementById(s).classList.toggle('hidden', s !== id);
 }
@@ -8730,7 +8960,9 @@ function renderItemdex(){
           <span class="nm" style="color:var(--parchment)">${it.name}</span>
           <span class="tag" style="color:var(--bone);border-color:rgba(232,220,192,.2)">Relic</span>
         </div>
-        <div class="bx-desc">Raises your <b style="color:var(--gold);font-style:normal">${STAT_LABEL[it.stat]||it.stat}</b>. Stacks up to ${ITEM_STACK_CAP}; later copies give less, but never less than nothing.</div>
+        <div class="bx-desc">Raises your <b style="color:var(--gold);font-style:normal">${STAT_LABEL[it.stat]||it.stat}</b>${
+          it.stat2 ? ` and <b style="color:var(--gold);font-style:normal">${STAT_LABEL[it.stat2]||it.stat2}</b> — the only relic that grants two` : ''
+        }. Stacks up to ${ITEM_STACK_CAP}; later copies give less, but never less than nothing.</div>
         <div class="bx-stats">
           <span>Common <b>${per}</b></span>
           <span>Legendary <b>${leg}</b></span>
@@ -8893,7 +9125,70 @@ function renderSettings(){
 /* Co-op lives in its own file (host-authoritative peer-to-peer multiplayer).
    Upload it alongside this one; change COOP_FILE if you name it differently. */
 const COOP_FILE = 'coop.html';
-document.getElementById('btn-coop').onclick = ()=>{ location.href = COOP_FILE; };
+
+/* ==================== HUNT WITH FRIENDS — GAME MODES =====================
+   The full roster from the game-modes spec. `route` is a URL for a playable
+   mode; modes without one render as locked "in the forge" tiles. Adding a
+   future mode = one entry here + its file. Order within a category is the
+   order tiles render. */
+const GAME_MODES = [
+  { cat:'Co-op', modes:[
+    { id:'swarm',    name:'Swarm',            players:'2–6', route:COOP_FILE,
+      desc:'The hunt as you know it — the endless swarm, faced together.' },
+    { id:'bossrush', name:'Boss Rush',        players:'2–6',
+      desc:'One colossal dragon. Phases, real raid roles, and an enrage timer.' },
+  ]},
+  { cat:'Defense', modes:[
+    { id:'wardwars', name:'Ward Wars',        players:'1–4',
+      desc:'No hero — place Discipline Wards along the path and fuse them to hold the line.' },
+  ]},
+  { cat:'Team Objective', modes:[
+    { id:'dvs',      name:'Dragons vs Slayers', players:'2–10',
+      desc:'Two mirrored sides. Every kill sends creeps at the enemy — first to the cap loses.' },
+    { id:'relicrush',name:'Relic Rush',       players:'4–10',
+      desc:'Carry the relic home. Carrying it costs you your offense — escort or be bold.' },
+    { id:'siege',    name:'Siege of the Aerie', players:'2–8',
+      desc:'Lanes, income, and troop sends. Break the enemy Aerie before they break yours.' },
+    { id:'hoard',    name:'Hoard Heist',      players:'4–10',
+      desc:'Hold the hoard. Uncontested presence is points; the timer decides.' },
+  ]},
+  { cat:'Free-for-All', modes:[
+    { id:'los',      name:'Last Order Standing', players:'3–10',
+      desc:'Everyone is an enemy. The ring closes, and a kill steals a Discipline.' },
+    { id:'curse',    name:'Cursed Chain',     players:'4–12',
+      desc:'Pass the curse before the timer ends you. Fast, chaotic, for big lobbies.' },
+    { id:'hunted',   name:'The Hunted',       players:'4–12',
+      desc:'One Corrupted among you. Survive to sunrise — or turn the rest.' },
+  ]},
+  { cat:'Duel', modes:[
+    { id:'slayerwars', name:'Slayer Wars',    players:'2–8',
+      desc:'One Chain each across the rift. Land it, reel them in, do not miss.' },
+    { id:'draftduel',  name:'Draft Duel',     players:'2',
+      desc:'Blind draft, sudden death, best of three. The ranked ladder lives here.' },
+  ]},
+];
+
+function renderModes(){
+  const el = document.getElementById('modes-body');
+  if(!el) return;
+  el.innerHTML = GAME_MODES.map(cat=>`
+    <div>
+      <div class="mode-cat">${cat.cat}</div>
+      <div class="mode-grid">${cat.modes.map(m=>`
+        <button class="mode-tile${m.route?'':' locked'}" data-mode="${m.id}">
+          ${m.route?'':'<span class="mode-soon">In the Forge</span>'}
+          <div class="mode-nm">${m.name}</div>
+          <div class="mode-ds">${m.desc}</div>
+          <div class="mode-meta">${m.players} players · ${cat.cat}</div>
+        </button>`).join('')}</div>
+    </div>`).join('');
+  for(const btn of el.querySelectorAll('.mode-tile')){
+    const m = GAME_MODES.flatMap(c=>c.modes).find(x=>x.id===btn.dataset.mode);
+    if(m && m.route) btn.onclick = ()=>{ location.href = m.route; };
+  }
+}
+document.getElementById('btn-coop').onclick = ()=>{ show('screen-modes'); renderModes(); };
+document.getElementById('btn-modes-back').onclick = ()=>{ show('screen-title'); };
 document.getElementById('btn-codexhub').onclick = ()=> show('screen-codexhub');
 document.getElementById('btn-hub-back').onclick  = ()=> show('screen-title');
 document.getElementById('btn-hub-chars').onclick = ()=>{
@@ -8976,22 +9271,26 @@ const GUIDE = [
    'This is what separates the orders. Every order runs on its own resource, and most of its arts either build it or spend it. <b>Ember</b> stacks Kindle until a dragon detonates; <b>Tide</b> stacks Soak until they freeze; <b>Forge</b> counts Bleed to a fatal stroke; <b>Storm</b> and <b>Gale</b> gather charge on <i>you</i> rather than on them. Arts that only pay off — a Detonate with nothing burning — are withheld until you own an art that can feed them, so you can never draft a dead pick.'],
   ['#9E8ED8', 'Physical vs Magic',
    'Every art is either <b>physical</b> or <b>magic</b>. Bosses resist one and are weak to the other — and because typing follows the art, not your order, a boss that resists magic is punishing the <b>arts you chose</b>. Mixing damage types is insurance.'],
+  ['#5AA9E6', 'Stacking Area Damage',
+   'Zones, auras, bursts, and other area effects give <b>less</b> the more of them land on the same dragon in quick succession — the first hit is full, the next roughly half, falling further from there. It resets once the window passes. This only restrains piling area on area; single-target arts always hit full.'],
   ['#5FBF6F', 'Levelling & Ascension',
    'Kill dragons, gather their experience, and level up to learn and deepen arts. Once your upgrade budget is spent, levels no longer dead-end — each further level grants a small permanent boost to damage, health, regen, move, cast speed, and area (an <b>Ascendant</b> tick), so your power keeps climbing to match the swarm.'],
   ['#B58CE6', 'Relics',
-   'You may carry <b>five different relics</b>, each stacking up to <b>five times</b>. A relic you already carry simply <b>stacks on the spot</b> — no interruption. A relic you have never seen stops the hunt to ask, and if your satchel is already full it asks <b>which of the five to give up</b> instead. Later copies of the same relic give less than the first, but never <b>less than nothing</b> — a relic is never a trap.'],
+   'You may carry <b>five different relics</b>, each stacking up to <b>five times</b>. A relic you already carry simply <b>stacks on the spot</b> — no interruption. A relic you have never seen stops the hunt to ask, and if your satchel is already full it asks <b>which of the five to give up</b> instead. Later copies of the same relic give less than the first, but never <b>less than nothing</b> — a relic is never a trap. Where relics are buried moves with the seed too, the same as shrines.'],
   ['#FF8C3A', 'Dodge & Repel',
    '<b>Space</b> rolls you a short distance with brief invulnerability — you have three charges, so you can chain escapes. <b>R</b> repels: it shoves nearby dragons back and stuns them on a ~10s cooldown. Repel is the answer to being surrounded — hold your ground instead of running forever.'],
   ['#FFD860', 'Shrines',
-   'Scattered across the world are four shrines you can stumble upon. Stand in the ring to activate (stepping out drains progress rather than resetting it). <b>Charge</b> empowers your ultimate, <b>Fey Dragon</b> summons an ally, <b>Lodestone</b> pulls all experience to you, and <b>Revive</b> banks a return — if you fall, you rise at 25% health. Returns stack, and a heart appears top-right for each one you hold.'],
+   'Scattered across the world are four shrines you can stumble upon. Stand in the ring to activate (stepping out drains progress rather than resetting it). <b>Charge</b> empowers your ultimate, <b>Fey Dragon</b> summons an ally, <b>Lodestone</b> pulls all experience to you, and <b>Revive</b> banks a return — if you fall, you rise at 25% health. Returns stack, and a heart appears top-right for each one you hold. Shrine placement is tied to the run\'s seed, so it moves every hunt — memorise nothing.'],
   ['#3FA9A0', 'The Warden',
    'Periodically a coil of sea serpents encircles you and closes in — pure kiting will not save you. Break through a segment and step out of the gap before it crushes you. It is the swarm\'s answer to running.'],
   ['#6FA84F', 'Hidden Threats',
    'After the seventh minute, a sigil burns in the dragon graveyards. Touch it and a ring of fire seals you in with <b>the Basilisk</b>, the Dragon Mother — fell her for a guaranteed relic. A single <b>Wyrmhoard relic</b> also lies buried somewhere each run — one only, so finding it matters.'],
+  ['#F2C14E', 'Champion Dragons',
+   'Any ordinary drake, wyvern, or salamander can arrive as a <b>champion</b> — a pulsing gold ring and a crown mark it. It carries roughly triple health and a ranged attack its kind does not otherwise have: a fan of shots, a wide burst, or a committed swoop. This is the early game\'s real threat — it is what gives you something to dodge before the named dragons start appearing.'],
   ['#E0663D', 'The Finale — Typhon',
    'Reach the tenth minute and the Titan rises. It does <b>not move</b> — it anchors where it rose and seals an arena around you, so there is no running. Typhon has <b>one hundred heads</b>: eight at a time, a new one sprouting for each you fell. Fell all one hundred to win.'],
   ['#9AA6B2', 'Reading Typhon',
-   'The fight escalates across four phases in about seven minutes. It teaches one threat at a time, then layers them. <b>Colour tells you the source</b>: violet spitters, red lungers, steel-blue armoured heads, deep orange from the body itself. <b>The shape of the tell tells you how to dodge.</b> Wide body attacks warn you generously — reposition. A lunger barely warns you at all — time it. An armoured head\'s charge draws its line before it commits: stand off the line and it whiffs, stunning itself and leaving it wide open. Wounded gift heads flare white and hit harder, but take more in return.'],
+   'The fight escalates across four phases in about seven minutes. It teaches one threat at a time, then layers them. <b>Colour tells you the source</b>: violet spitters, red lungers, steel-blue armoured heads, deep orange from the body itself. <b>The shape of the tell tells you how to dodge.</b> Wide body attacks warn you generously — reposition. A lunger barely warns you at all — time it. An armoured head\'s charge draws its line before it commits: stand off the line and it whiffs, stunning itself and leaving it wide open. Wounded gift heads flare white and hit harder, but take more in return. Push past that window and the Titan begins to genuinely <b>come apart</b> — heads fall on their own, faster the longer it drags — so the fight always concludes, win or lose.'],
 ];
 function renderGuide(){
   const el = document.getElementById('guide-body');
