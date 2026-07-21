@@ -9239,7 +9239,7 @@ function renderSettings(){
   // co-op slayer count — the [MP] difficulty hook, live
   const row = document.createElement('div'); row.className = 'set';
   row.innerHTML = `<div class="set-l"><div class="k">Slayers</div>
-    <div class="d">Difficulty rises <b style="font-style:normal;color:var(--parchment)">${Math.round(CFG.DIFF_PER_PLAYER*100)}%</b> per extra slayer — enemy health, spawn rate, and dragons per wave. Co-op is not yet wired, but the swarm already knows how to scale.</div></div>`;
+    <div class="d">Difficulty rises <b style="font-style:normal;color:var(--parchment)">${Math.round(CFG.DIFF_PER_PLAYER*100)}%</b> per extra slayer — enemy health, spawn rate, and dragons per wave. In a co-op hunt this is set automatically from the size of your party; this slider is for solo practice against a heavier swarm.</div></div>`;
   const step = document.createElement('div'); step.className = 'step';
   const dec = document.createElement('button'); dec.textContent = '−';
   const val = document.createElement('span'); val.className = 'v'; val.textContent = CFG.PLAYERS;
@@ -9706,6 +9706,7 @@ function renderCodex(){
     </div>`;
 }
 document.getElementById('btn-start').onclick = ()=>{
+  if(!(typeof MP!=='undefined' && MP.on)) CFG.PLAYERS = 1;   // solo is always solo
   if(typeof MP!=='undefined' && MP.on && MP.pickingOrder){
     // co-op: the oath commits your order to the ROOM — the hunt starts later
     MP.pickingOrder = false;
@@ -10345,6 +10346,12 @@ function mpBeginAll(){
 function mpBegin(elIdx,seed){
   MP.started=true;
   document.getElementById('screen-mp').classList.add('hidden');
+  /* THE GAP: CFG.PLAYERS drives every difficulty multiplier — enemy health,
+     spawn rate, dragons per surge — but nothing ever set it from the actual
+     party. Four slayers were fighting a solo-sized swarm. The whole room
+     shares one seed and one roster, so everyone computes the same number and
+     the simulations stay in step. */
+  CFG.PLAYERS = Math.max(1, Math.min(8, MP.players.size));
   // hand off to the ORDINARY start() — the same game, same seed for everyone
   start(ELEMENTS[MP.elIndex], seed);
 }
