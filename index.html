@@ -2419,6 +2419,12 @@ function enterArena(sg){
    break a segment (or several) to open an escape, or be crushed inward and take
    heavy damage. Standing and fighting is the only way out. */
 const CAGE = { R0:560, RMIN:150, SHRINK:40, SEG:20, SEG_HP:140, GAP_NEEDED:1, COOLDOWN:95 };
+/* Playtest request: the Warden's serpents should be HP TANKS — a wall you
+   genuinely have to carve through, not a curtain any stray projectile pops.
+   Segment health climbs with the run (capped so a weak build can still break
+   one segment before the coil closes — an unbreakable cage is just a death
+   sentence with extra steps). */
+function cageSegHp(){ return Math.round(CAGE.SEG_HP * Math.min(5.5, 1 + G.t/130)); }
 /* ========================= TYPHON — THE FINALE ========================
    At 10:00 the Titan rises. It has a great serpentine body ringed with heads.
    Only ~8 heads are active at once, drawn from a pool of 100 — destroy one and
@@ -2882,7 +2888,7 @@ function spawnCage(){
   const p = G.p;
   const segs = [];
   for(let i=0;i<CAGE.SEG;i++){
-    segs.push({ a:(i/CAGE.SEG)*6.2832, hp:CAGE.SEG_HP, maxhp:CAGE.SEG_HP, alive:true });
+    segs.push({ a:(i/CAGE.SEG)*6.2832, hp:cageSegHp(), maxhp:cageSegHp(), alive:true });
   }
   G.cage = { cx:p.x, cy:p.y, r:CAGE.R0, t:0, segs, warned:false };
   G.banner = { text:'A COIL OF SERPENTS ENCIRCLES YOU', life:4, max:4, sub:'break through before they close in' };
@@ -6053,7 +6059,12 @@ function spawnElite(){
 }
 function spawnEnemy(elite=false){
   if(elite){ spawnElite(); return; }
-  if(G.enemies.length > CFG.MAX_ENEMIES) return;
+  // Multiplayer carries a lower ceiling: every extra dragon costs the host a
+  // snapshot row AND costs the weakest machine in the party a frame. The
+  // late-game ramp is exhilarating solo and a slideshow for a friend on a
+  // laptop, which is exactly what was reported.
+  const cap = (typeof MP!=='undefined' && MP.on) ? Math.round(CFG.MAX_ENEMIES*0.55) : CFG.MAX_ENEMIES;
+  if(G.enemies.length > cap) return;
   const k = pickDragon();
   const {x,y} = spawnPos();
   announce(k);
@@ -6068,14 +6079,20 @@ function spawnTick(dt){
   // While a boss is up the swarm thins out — the fight should be about the
   // dragon, not about the forty drakes standing between you and it.
   const bossUp = G.boss && G.boss.alive;
-  const perSec = 1.6 * spawnScale() * (bossUp ? 0.35 : 1);
+  /* LATE-GAME RAMP (playtest request): "wishing mobs spawned faster by the
+     end." The exponential alone peaked ~13/sec at minute 9; from minute five
+     an extra ramp climbs on top, reaching ~2.2x by the finale — the last
+     minutes now feel like a flood, not a plateau. MAX_ENEMIES still guards
+     the frame rate. */
+  const lateRamp = 1 + Math.max(0, (G.t - 300) / 300) * 1.2;
+  const perSec = 1.6 * spawnScale() * lateRamp * (bossUp ? 0.35 : 1);
   G.spawnAcc += perSec * dt;
   while(G.spawnAcc >= 1){ G.spawnAcc -= 1; spawnEnemy(); }
 
   // burst wave every SURGE seconds — a ring drops in around you at once
   if(!bossUp && G.t >= G.surgeAt){
     G.surgeAt += DIFF.SURGE;
-    const n = Math.round((8 + threat()*1.6) * diff());
+    const n = Math.round((8 + threat()*1.6) * diff() * (0.5 + lateRamp*0.5));
     for(let i=0;i<n;i++) spawnEnemy();
     G.shake = Math.max(G.shake, 3);
   }
@@ -6185,7 +6202,11 @@ function update(dt){
   tickAbilities(dt);
 
   // enemies
-  if(typeof MP!=='undefined' && MP.on && !MP.isHost){
+  // On a joiner the host owns every enemy's position, so running the local
+  // chase/steer AI as well is pure wasted CPU — and it fought the glide,
+  // producing jitter. Glide only.
+  const mpJoiner = (typeof MP!=='undefined' && MP.on && !MP.isHost);
+  if(mpJoiner){
     for(const e of G.enemies){
       if(!e.alive || e.tx===undefined || e.typhonHead) continue;
       e.x += (e.tx-e.x)*Math.min(1,dt*14);
@@ -10066,9 +10087,22 @@ function mpJoin(code){
   MP.peer.on('error',e=>mpStatus(e.type==='peer-unavailable'?('no room '+code):('error: '+e.type),'err'));
 }
 function mpAddPlayer(p){
-  if(MP.players.has(p.id)) return;
+  /* THE WRONG-CHARACTER BUG: this used to early-return for any id already
+     known. A player joins (defaulting to Fire), THEN picks their Order on the
+     ring and re-announces — and that update was silently thrown away, so
+     everyone else kept drawing them as Fire forever. It now UPDATES an
+     existing entry (order + name only) while preserving live position, health
+     and alive-state, which a blind overwrite would have wiped. */
+  const cur = MP.players.get(p.id);
+  if(cur){
+    if(p.el !== undefined) cur.el = p.el|0;
+    if(p.name) cur.name = p.name;
+    mpRoster();
+    return;
+  }
   MP.players.set(p.id,{ id:p.id, name:p.name, el:p.el|0,
-    x:0,y:0,tx:0,ty:0, hp:100,maxhp:100, alive:true, face:1, lv:1, kills:0, moving:false });
+    x:undefined,y:undefined,tx:undefined,ty:undefined,
+    hp:100,maxhp:100, alive:true, face:1, lv:1, kills:0, moving:false });
   mpRoster();
 }
 function mpRosterArr(){ return [...MP.players.values()].map(p=>({id:p.id,name:p.name,el:p.el})); }
@@ -10137,8 +10171,13 @@ function mpRoster(){
 }
 
 /* ---- SNAPSHOTS. The host mirrors its authoritative world to everyone. ---- */
+/* Enemy kinds travel as an INDEX, not a string: "salamander" is 12 bytes on
+   every one of 150 rows, ten times a second, to every peer. The table is
+   built once and shared by construction (both sides read the same object). */
+const MP_KEYS = Object.keys(DRAGONS).concat(Object.keys(BOSSES));
 function mpSnapshot(){
   if(!MP.on || !MP.isHost || !G || !G.running) return;
+  MP.snapN = (MP.snapN||0) + 1;
   const live=G.enemies.filter(e=>e.alive && !e.typhonHead);   // the finale is local
   const players=[...MP.players.values()].map(p=>[p.id,Math.round(p.hp),p.alive?1:0]);
   for(const [pid,conn] of MP.conns){
@@ -10148,9 +10187,10 @@ function mpSnapshot(){
     try{
       conn.send({
         t:'snap',
-        e:near.slice(0,150).map(e=>[e.id,Math.round(e.x),Math.round(e.y),e.key,Math.round(e.hp),
+        e:near.slice(0,110).map(e=>[e.id,Math.round(e.x),Math.round(e.y),MP_KEYS.indexOf(e.key),Math.round(e.hp),
                                     e.elite?1:0, e.boss?1:0, e.flash>0?1:0, e.champion?1:0]),
-        gm:G.gems.slice(0,120).map(g=>[Math.round(g.x),Math.round(g.y),g.v]),
+        // gems barely move — a third of the rate is plenty and saves real bytes
+        gm: (MP.snapN%3===0) ? G.gems.slice(0,80).map(g=>[Math.round(g.x),Math.round(g.y),g.v]) : null,
         dr:G.drops.slice(0,40).map(it=>[it.id,Math.round(it.x),Math.round(it.y),it.def.id,it.rar.id]),
         eb:G.ebullets.slice(0,60).map(b=>[Math.round(b.x),Math.round(b.y),b.r,b.c]),
         gt:Math.round(G.t*10)/10, bi:G.biome, kl:G.kills,
@@ -10165,7 +10205,8 @@ function mpSnapshot(){
 function mpApplySnap(d){
   if(MP.isHost || !G) return;
   const seen=new Set();
-  for(const [id,x,y,key,hp,elite,boss,flash,champ] of d.e){
+  for(const [id,x,y,k,hp,elite,boss,flash,champ] of d.e){
+    const key = (typeof k === 'number') ? MP_KEYS[k] : k;
     seen.add(id);
     let e=G.enemies.find(q=>q.id===id);
     if(!e){
@@ -10191,7 +10232,9 @@ function mpApplySnap(d){
   for(const e of G.enemies) if(!seen.has(e.id) && !e.typhonHead) e.alive=false;
   G.enemies=G.enemies.filter(e=>e.alive);
   // gems, drops and enemy fire are visual for joiners; the host owns collection
-  G.gems=(d.gm||[]).map(([x,y,v])=>({x,y,v,vx:0,vy:0}));
+  // gems now arrive on every third snapshot — keep the last set on the others,
+  // otherwise they would blink out twice for every once they appeared
+  if(d.gm) G.gems=d.gm.map(([x,y,v])=>({x,y,v,vx:0,vy:0}));
   G.drops=(d.dr||[]).map(([id,x,y,did,rid])=>({
     id, x, y, ph:0, def:ITEMS.find(z=>z.id===did)||ITEMS[0], rar:RARITY.find(z=>z.id===rid)||RARITY[0] }));
   G.ebullets=(d.eb||[]).map(([x,y,r,c])=>({x,y,r,c,vx:0,vy:0,life:1,ph:0}));
