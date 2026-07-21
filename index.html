@@ -4439,6 +4439,8 @@ function isIsolated(e){
 
 function spawnArtBolt(a, ang, extra){
   const C=G.el.c, C2=G.el.c2;
+  // tell the party what we just threw, so a friend is not fighting invisibly
+  if(typeof MP!=='undefined' && MP.on && !G._mpGhost) mpCast(a, ang, extra);
   G.bullets.push({ x:G.p.x, y:G.p.y, vx:Math.cos(ang)*A(a,'speed'), vy:Math.sin(ang)*A(a,'speed'),
     r:Math.max(4,A(a,'size')), dmg:A(a,'dmg')*(extra&&extra.mul||1), c:C, c2:C2,
     type:ARCH_TYPE[a.def.shape], pierce:A(a,'pierce'), life:1.8, hitset:new Set(),
@@ -6534,6 +6536,9 @@ function update(dt){
   for(const b of G.bullets){
     b.trail.push({x:b.x,y:b.y}); if(b.trail.length>6) b.trail.shift();
     b.x += b.vx*dt; b.y += b.vy*dt; b.life -= dt;
+    // a replica of a friend's cast: it flies and it fades, but it may never
+    // touch anything. Damage stays entirely host-authoritative.
+    if(b.ghost) continue;
     for(const e of near(b.x,b.y,b.r+24)){
       if(!e.alive || b.hitset.has(e)) continue;
       const dx=e.x-b.x, dy=e.y-b.y;
@@ -10137,6 +10142,7 @@ function mpData(from,conn,d){
       break;
     }
     case 'hit':  if(MP.isHost) mpHostHit(d); break;
+    case 'cast': if(MP.isHost) mpRelayExcept(from,d); mpApplyCast(d); break;
     case 'relic': {
       if(MP.isHost) mpRelayExcept(from,d);
       const def=ITEMS.find(z=>z.id===d.d), rar=RARITY.find(z=>z.id===d.r);
@@ -10193,7 +10199,8 @@ function mpSnapshot(){
         // gems barely move — a third of the rate is plenty and saves real bytes
         gm: (MP.snapN%3===0) ? G.gems.slice(0,80).map(g=>[Math.round(g.x),Math.round(g.y),g.v]) : null,
         dr:G.drops.slice(0,40).map(it=>[it.id,Math.round(it.x),Math.round(it.y),it.def.id,it.rar.id]),
-        eb:G.ebullets.slice(0,60).map(b=>[Math.round(b.x),Math.round(b.y),b.r,b.c]),
+        eb:G.ebullets.slice(0,60).map(b=>[Math.round(b.x),Math.round(b.y),b.r,b.c,
+                                          Math.round(b.vx||0),Math.round(b.vy||0)]),
         gt:Math.round(G.t*10)/10, bi:G.biome, kl:G.kills,
         p:players,
       });
@@ -10238,14 +10245,52 @@ function mpApplySnap(d){
   if(d.gm) G.gems=d.gm.map(([x,y,v])=>({x,y,v,vx:0,vy:0}));
   G.drops=(d.dr||[]).map(([id,x,y,did,rid])=>({
     id, x, y, ph:0, def:ITEMS.find(z=>z.id===did)||ITEMS[0], rar:RARITY.find(z=>z.id===rid)||RARITY[0] }));
-  G.ebullets=(d.eb||[]).map(([x,y,r,c])=>({x,y,r,c,vx:0,vy:0,life:1,ph:0}));
+  /* THE PROJECTILE STUTTER: bullets used to arrive as position only with
+     vx/vy forced to zero, and the whole array was replaced every snapshot —
+     so on a joiner they sat still for 100ms then teleported. They now carry
+     velocity and FLY locally between snapshots, which is what made them look
+     smooth for the host and broken for everyone else. */
+  G.ebullets=(d.eb||[]).map(([x,y,r,c,vx,vy])=>({x,y,r,c,vx:vx||0,vy:vy||0,life:1,ph:0}));
   if(Number.isFinite(d.gt)) G.t=d.gt;
   if(Number.isFinite(d.bi)) G.biome=d.bi;
   if(Number.isFinite(d.kl)) G.kills=d.kl;
+  /* THE JUMPING HEALTH BAR: a player's health arrived from two places at two
+     different rates — their own 20Hz position reports, and the host's 10Hz
+     echo in this snapshot. The echo is always the older of the two, so every
+     snapshot yanked the bar back to a stale value and the next position
+     report pulled it forward again. Position reports are now the single
+     source of truth for health; the snapshot only settles who is DOWN, which
+     is host-authoritative and cannot flicker. */
   for(const [id,hp,alive] of (d.p||[])){
     const p=MP.players.get(id);
-    if(p && id!==MP.myId){ p.hp=hp; p.alive=!!alive; }
+    if(p && id!==MP.myId) p.alive=!!alive;
   }
+}
+/* SEEING EACH OTHER FIGHT.
+   Only the RESULTS of a friend's arts used to cross the wire — dragons simply
+   fell over with nothing visibly killing them. Casts are now announced as
+   tiny events (about sixty bytes, only when something is actually cast) and
+   every other machine spawns a visual-only replica: it flies, it fades, and
+   it can never deal damage, because damage stays host-authoritative. This is
+   cosmetic parity, deliberately kept out of the simulation. */
+const MP_CAST_MAX = 6;      // per player per second — a hard spam ceiling
+function mpCast(a, ang, extra){
+  const now = (G&&G.t)||0;
+  MP._castT = MP._castT || 0;
+  if(now - MP._castT < 1/MP_CAST_MAX) return;
+  MP._castT = now;
+  const msg = { t:'cast', id:MP.myId, x:Math.round(G.p.x), y:Math.round(G.p.y),
+                a:Math.round(ang*100)/100, sp:Math.round(A(a,'speed')),
+                r:Math.round(Math.max(4,A(a,'size'))), c:G.el.c, c2:G.el.c2,
+                ty:ARCH_TYPE[a.def.shape] };
+  if(MP.isHost) mpSendAll(msg); else mpSendHost(msg);
+}
+function mpApplyCast(d){
+  if(!G || !G.running || d.id===MP.myId) return;
+  // visual only: no art, no damage, no hitset — it cannot touch anything
+  G.bullets.push({ x:d.x, y:d.y, vx:Math.cos(d.a)*(d.sp||300), vy:Math.sin(d.a)*(d.sp||300),
+    r:d.r||6, dmg:0, c:d.c, c2:d.c2, type:d.ty, pierce:0, life:1.4,
+    hitset:new Set(), trail:[], ghost:true });
 }
 // joiners tell the host they hit something; the host is the only one who applies it
 function mpReportHit(e,dmg,c,type){
