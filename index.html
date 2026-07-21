@@ -8212,6 +8212,8 @@ function render(){
   ctx.beginPath(); ctx.arc(p.x, p.y, p.r*2.2, 0, 6.2832); ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
 
+  if(typeof MP!=='undefined' && MP.on) mpDrawPlayers();   // party first, you on top
+
   const pdef = pickPlayerSprite(G.el);
   const ppal = playerPalette(G.el);
   const pscale = (p.r * 2.4) / (pdef.w * pdef.cell);
@@ -8797,8 +8799,15 @@ function drawMinimap(){
     m.beginPath(); m.arc(q.x, q.y, pulse, 0, 6.2832); m.fill();
   }
 
-  // [MP] friends — empty today, one loop away from working in co-op
-  if(typeof MP!=='undefined' && MP.on) mpDrawPlayers();
+  // [MP] party members as minimap dots, so you can find each other
+  if(typeof MP!=='undefined' && MP.on) for(const f of MP.players.values()){
+    if(f.id===MP.myId || !Number.isFinite(f.x)) continue;
+    const q = plot(f.x, f.y);
+    const E = ELEMENTS[f.el]||ELEMENTS[0];
+    m.fillStyle = E.c;
+    m.beginPath(); m.arc(q.x, q.y, 3, 0, 6.2832); m.fill();
+    m.strokeStyle = '#fff'; m.lineWidth = 1; m.stroke();
+  }
   if(G.friends) for(const f of G.friends){
     const q = plot(f.x, f.y);
     m.fillStyle = f.c || '#6FCB7A';
@@ -10082,7 +10091,13 @@ function mpData(from,conn,d){
     case 'begin': mpBegin(d.el, d.seed); break;
     case 'pos': {
       const p=MP.players.get(d.id);
-      if(p){ p.tx=d.x; p.ty=d.y; p.face=d.f; p.moving=!!d.m; p.hp=d.hp; p.maxhp=d.mh; p.alive=!!d.a; p.lv=d.lv; }
+      if(p){
+        p.tx=d.x; p.ty=d.y; p.face=d.f; p.moving=!!d.m; p.hp=d.hp; p.maxhp=d.mh; p.alive=!!d.a; p.lv=d.lv;
+        // THE BUG: roster entries carry no position, and this handler only ever
+        // set the TARGET. p.x stayed undefined, the glide produced NaN, and the
+        // remote slayer was silently invisible. First report snaps them in.
+        if(!Number.isFinite(p.x)){ p.x=d.x; p.y=d.y; }
+      }
       if(MP.isHost) mpRelayExcept(from,d);
       break;
     }
@@ -10215,6 +10230,7 @@ function mpDrawPlayers(){
   for(const p of MP.players.values()){
     if(p.id===MP.myId) continue;
     const el=ELEMENTS[p.el]||ELEMENTS[0];
+    if(!Number.isFinite(p.x)||!Number.isFinite(p.tx)) continue;   // no report yet
     if(Math.abs(p.x-G.cam.x)>W/2+90||Math.abs(p.y-G.cam.y)>H/2+90) continue;
     p.x+=(p.tx-p.x)*0.25; p.y+=(p.ty-p.y)*0.25;
     if(!p.alive){
