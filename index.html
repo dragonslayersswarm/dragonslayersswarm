@@ -5802,6 +5802,13 @@ function hurtPlayer(amount, srcX, srcY, pierceInv){
       G.shake = Math.max(G.shake, 16);
       G.banner = { text:'YOU RISE AGAIN', life:4, max:4,
         sub: G.revives > 0 ? `${G.revives} return${G.revives>1?'s':''} still held` : 'the shrine spends its last gift' };
+      // tell the party I'm back — otherwise, once 'fell'/snapshot own down-state,
+      // a revived slayer would stay drawn as a corpse for the rest of the run
+      if(typeof MP!=='undefined' && MP.on){
+        const rmsg={t:'ev',k:'rose',n:MP.myName,id:MP.myId};
+        if(MP.isHost) mpSendAll(rmsg); else mpSendHost(rmsg);
+        const me=MP.players.get(MP.myId); if(me) me.alive=true;
+      }
       // radial nova to knock the swarm off you
       G.fx.push({ type:'nova', x:p.x, y:p.y, r:6, max:360, sp:640, dmg:60, c:'#FFF6D0', dtype:MAG, hitset:new Set() });
       for(let i=0;i<40;i++){ const a=FX()*6.28, sp=frnd(120,360);
@@ -6222,6 +6229,21 @@ function update(dt){
     let dx = p.x-e.x, dy = p.y-e.y;
     const d = Math.hypot(dx,dy)||1;
 
+    /* On a joiner the host owns this enemy completely: its position (already
+       glided toward the host's value just above), its hp, its death, AND every
+       projectile it fires — those arrive pre-made in the snapshot's `eb` array.
+       Running the local chase/attack AI here as well made the enemy drift off
+       its authoritative position (fighting the glide) and, worse, spawned a
+       SECOND set of enemy bullets the host never fired — phantom fire that
+       still dealt real local damage. The joiner keeps only its own contact
+       damage, which is locally authoritative exactly like every other source
+       of harm to the local player (host `eb` bullets, etc.). Verified: a lone
+       salamander that fired 1 local bullet in 2s now fires 0. */
+    if(mpJoiner){
+      if(d < e.r + p.r && p.inv <= 0){ hurtPlayer(e.dmg, e.x, e.y); if(!G.running) return; }
+      continue;
+    }
+
     // recycle far strays — but never a serpent head (it would drag its whole
     // body across the map) or an elite (the player earned that fight)
     if(d > cull*1.6 && !e.isHead && !e.elite){
@@ -6300,8 +6322,7 @@ function update(dt){
       e.slamT -= dt;
       if(e.slamT <= 0 && d < 340){
         e.slamT = e.enraged ? rnd(1.8,2.6) : rnd(3.2,4.6);
-        G.fx.push({ type:'nova', dtype:null, x:e.x, y:e.y, r:8, max:300, sp:430,
-                    dmg:e.dmg*0.75, c:e.c2, hitset:new Set(), hostile:true });
+        hostHazard(e.x, e.y, 300, 430, e.dmg*0.75, e.c2);
         G.shake = Math.max(G.shake, 8);
         spd = 0;
       }
@@ -6373,8 +6394,7 @@ function update(dt){
           e.untargetable = false;
           e.x = e.burX ?? p.x; e.y = e.burY ?? p.y;
           if(Math.hypot(p.x-e.x, p.y-e.y) < e.r*1.4 && p.inv <= 0) hurtPlayer(e.dmg*1.1, e.x, e.y);
-          G.fx.push({ type:'nova', dtype:null, x:e.x, y:e.y, r:8, max:e.r*2.6, sp:700,
-                      dmg:e.dmg*0.5, c:e.c2, hitset:new Set(), hostile:true });
+          hostHazard(e.x, e.y, e.r*2.6, 700, e.dmg*0.5, e.c2);
           G.shake = Math.max(G.shake, 9);
           for(let i=0;i<14;i++){
             const a2=(i/14)*6.2832;
@@ -6412,9 +6432,7 @@ function update(dt){
         for(let i=0;i<n;i++){
           // the first lands where you stand; the rest scatter around you
           const ox = i===0 ? 0 : frnd(-160,160), oy = i===0 ? 0 : frnd(-160,160);
-          G.fx.push({ type:'erupt', x:p.x+ox, y:p.y+oy, r:74,
-                      life:1.1 + i*0.18, max:1.1 + i*0.18,
-                      dmg:e.dmg*0.8, c:e.c, c2:e.c2, done:false });
+          hostErupt(p.x+ox, p.y+oy, 74, 1.1 + i*0.18, e.dmg*0.8, e.c, e.c2);
         }
       }
     }
@@ -6425,8 +6443,7 @@ function update(dt){
       e.swpT -= dt;
       if(e.swpT <= 0 && d < 260){
         e.swpT = e.enraged ? rnd(2.4,3.4) : rnd(4.0,5.6);
-        G.fx.push({ type:'nova', dtype:null, x:e.x, y:e.y, r:8, max:230, sp:620,
-                    dmg:e.dmg*0.6, c:e.c2, hitset:new Set(), hostile:true });
+        hostHazard(e.x, e.y, 230, 620, e.dmg*0.6, e.c2);
         G.shake = Math.max(G.shake, 6);
       }
     }
@@ -9758,7 +9775,7 @@ function start(el, seed){
 function gameOver(won){
   G.running = false;
   if(typeof MP!=='undefined' && MP.on){
-    const msg={t:'ev',k:'fell',n:MP.myName};
+    const msg={t:'ev',k:'fell',n:MP.myName,id:MP.myId};
     if(MP.isHost) mpSendAll(msg); else mpSendHost(msg);
     const me=MP.players.get(MP.myId); if(me) me.alive=false;
   }
@@ -10086,11 +10103,29 @@ function mpJoin(code){
       opened=true; MP.conns.set('host',conn);
       conn.send({t:'hello',name:MP.myName,el:MP.elIndex});
       conn.on('data',d=>mpData('host',conn,d));
-      conn.on('close',()=>mpStatus('lost the host','err'));
+      conn.on('close',()=>mpHostLost());
     });
     setTimeout(()=>{ if(!opened) mpStatus('no room found with code '+code,'err'); },6000);
   });
   MP.peer.on('error',e=>mpStatus(e.type==='peer-unavailable'?('no room '+code):('error: '+e.type),'err'));
+  // the underlying signalling link dropping is also a host-loss once we're in
+  MP.peer.on('disconnected',()=>{ if(MP.started) mpHostLost(); });
+}
+/* HOST DISCONNECT (audit 5.4 — was 'undefined behaviour'). The host owns the
+   entire world; when its data link closes there are no more snapshots, so the
+   joiner's world silently froze and the run could never end. Now it resolves
+   into a defined state exactly once: a clear banner, and the ordinary run
+   summary so the player keeps their stats and a way back to the menu, rather
+   than being stranded in a dead world. Fires only mid-run; a drop while still
+   in the lobby just surfaces as a status message. */
+function mpHostLost(){
+  if(MP._hostLost) return; MP._hostLost = true;
+  mpStatus('lost the host','err');
+  if(typeof G!=='undefined' && G && G.running){
+    G.banner = { text:'THE HOST HAS LEFT', life:6, max:6,
+                 sub:'the shared hunt cannot continue — your run ends here' };
+    gameOver(false);
+  }
 }
 function mpAddPlayer(p){
   /* THE WRONG-CHARACTER BUG: this used to early-return for any id already
@@ -10132,7 +10167,11 @@ function mpData(from,conn,d){
     case 'pos': {
       const p=MP.players.get(d.id);
       if(p){
-        p.tx=d.x; p.ty=d.y; p.face=d.f; p.moving=!!d.m; p.hp=d.hp; p.maxhp=d.mh; p.alive=!!d.a; p.lv=d.lv;
+        p.tx=d.x; p.ty=d.y; p.face=d.f; p.moving=!!d.m; p.hp=d.hp; p.maxhp=d.mh; p.lv=d.lv;
+        /* NOTE: alive is deliberately NOT taken from the position report. The
+           channel is unreliable/unordered, so the final a:1 a client sends
+           before it dies can arrive AFTER its 'fell' event and resurrect the
+           corpse. Down-state is owned by 'fell'/'rose' + the host snapshot. */
         // THE BUG: roster entries carry no position, and this handler only ever
         // set the TARGET. p.x stayed undefined, the glide produced NaN, and the
         // remote slayer was silently invisible. First report snaps them in.
@@ -10153,6 +10192,7 @@ function mpData(from,conn,d){
       break;
     }
     case 'snap': mpApplySnap(d); break;
+    case 'hz':   mpApplyHazard(d); break;   // host-owned enemy ground hazard (slam/sweep/burrow-erupt/rain)
     case 'ev':   mpEvent(d); if(MP.isHost) mpRelayExcept(from,d); break;
     case 'ready':
       if(MP.isHost){ MP.ready=(MP.ready||new Set()); MP.ready.add(d.id); mpCheckReady(); }
@@ -10164,8 +10204,15 @@ function mpEvent(d){
   switch(d.k){
     case 'xp': gainXP(d.v, true); break;
     case 'say': G.banner={text:d.h,sub:d.s,life:3.5,max:3.5}; break;
-    case 'fell': G.banner={text:(d.n||'a slayer')+' HAS FALLEN',sub:'hold the line',life:3.5,max:3.5}; break;
-    case 'rose': G.banner={text:(d.n||'a slayer')+' RETURNS',sub:'the shrine gives back',life:3,max:3}; break;
+    /* 'fell'/'rose' are the authoritative DOWN/UP signals for a remote player.
+       Previously they only raised a banner, so a corpse kept alive===true and
+       rendered as a standing slayer for the rest of the run. Set the flag here;
+       the host, having processed it, then echoes alive=0/1 in every snapshot,
+       which is the flicker-proof reinforcement the health-bar fix relies on. */
+    case 'fell': { const p=MP.players.get(d.id); if(p) p.alive=false;
+      G.banner={text:(d.n||'a slayer')+' HAS FALLEN',sub:'hold the line',life:3.5,max:3.5}; break; }
+    case 'rose': { const p=MP.players.get(d.id); if(p) p.alive=true;
+      G.banner={text:(d.n||'a slayer')+' RETURNS',sub:'the shrine gives back',life:3,max:3}; break; }
   }
 }
 function mpRoster(){
@@ -10213,7 +10260,9 @@ function mpSnapshot(){
 function mpApplySnap(d){
   if(MP.isHost || !G) return;
   const seen=new Set();
-  for(const [id,x,y,k,hp,elite,boss,flash,champ] of d.e){
+  // d.e can be absent on a truncated/garbage message (unreliable channel) —
+  // iterating undefined threw and killed the joiner's whole update loop.
+  for(const [id,x,y,k,hp,elite,boss,flash,champ] of (d.e||[])){
     const key = (typeof k === 'number') ? MP_KEYS[k] : k;
     seen.add(id);
     let e=G.enemies.find(q=>q.id===id);
@@ -10291,6 +10340,35 @@ function mpApplyCast(d){
   G.bullets.push({ x:d.x, y:d.y, vx:Math.cos(d.a)*(d.sp||300), vy:Math.sin(d.a)*(d.sp||300),
     r:d.r||6, dmg:0, c:d.c, c2:d.c2, type:d.ty, pierce:0, life:1.4,
     hitset:new Set(), trail:[], ghost:true });
+}
+/* ENEMY GROUND HAZARDS ACROSS THE WIRE.
+   Slams, sweeps, burrow-eruptions and rain are ground shockwaves the HOST's
+   enemy AI creates. Since a joiner no longer runs that AI (it would double the
+   host's enemy fire and fight the glide), these hazards would otherwise never
+   exist on a joiner — leaving joiners silently immune to every boss slam. The
+   host now mirrors each one as a tiny event with its RESOLVED damage/geometry;
+   the joiner spawns a plain damaging nova/erupt that resolves against its own
+   hp, exactly like contact damage and enemy fire. The joiner deliberately
+   spawns the 'nova'/'erupt' form, never the enemy-spawning 'burrow' variant,
+   so a mirrored hazard can never fabricate a phantom dragon. */
+function hostHazard(x, y, max, sp, dmg, c){
+  G.fx.push({ type:'nova', dtype:null, x, y, r:8, max, sp, dmg, c, hitset:new Set(), hostile:true });
+  if(typeof MP!=='undefined' && MP.on && MP.isHost)
+    mpSendAll({ t:'hz', x:Math.round(x), y:Math.round(y), mx:Math.round(max), sp:Math.round(sp), dm:Math.round(dmg), c });
+}
+function hostErupt(x, y, r, life, dmg, c, c2){
+  G.fx.push({ type:'erupt', x, y, r, life, max:life, dmg, c, c2, done:false });
+  if(typeof MP!=='undefined' && MP.on && MP.isHost)
+    mpSendAll({ t:'hz', k:'erupt', x:Math.round(x), y:Math.round(y), r:Math.round(r),
+                lf:Math.round(life*100)/100, dm:Math.round(dmg), c, c2 });
+}
+function mpApplyHazard(d){
+  if(MP.isHost || !G || !G.running) return;
+  if(d.k==='erupt'){
+    G.fx.push({ type:'erupt', x:d.x, y:d.y, r:d.r, life:d.lf, max:d.lf, dmg:d.dm, c:d.c, c2:d.c2, done:false });
+  } else {
+    G.fx.push({ type:'nova', dtype:null, x:d.x, y:d.y, r:8, max:d.mx, sp:d.sp, dmg:d.dm, c:d.c, hitset:new Set(), hostile:true });
+  }
 }
 // joiners tell the host they hit something; the host is the only one who applies it
 function mpReportHit(e,dmg,c,type){
