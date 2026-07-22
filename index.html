@@ -485,6 +485,15 @@
   /* ---------- LEVEL UP ---------- */
   #overlay-levelup{background:rgba(6,5,10,.86);backdrop-filter:blur(3px);z-index:30}
   .lvl-econ{display:flex;gap:.8rem;margin-top:1.6rem;justify-content:center}
+  .lvl-ranks{display:flex;gap:.7rem;margin-top:1.2rem;justify-content:center;flex-wrap:wrap}
+  .rank-art{display:flex;align-items:center;gap:.5rem;padding:.4rem .7rem;border:1px solid rgba(255,255,255,.09);
+    border-radius:.5rem;background:rgba(255,255,255,.02)}
+  .rank-art.maxed{border-color:var(--gold);background:rgba(201,162,39,.08)}
+  .rank-art .ra-nm{font-size:.66rem;letter-spacing:.04em;color:var(--bone);min-width:5.2em}
+  .rank-art .ra-pips{display:flex;gap:2px}
+  .rank-art .ra-pip{width:6px;height:6px;border-radius:1px;background:rgba(255,255,255,.14)}
+  .rank-art .ra-pip.on{background:var(--gold)}
+  .rank-art .ra-max{font-size:.58rem;letter-spacing:.12em;color:var(--gold);text-transform:uppercase}
   .econ-btn{font-family:var(--mono);font-size:.66rem;letter-spacing:.14em;text-transform:uppercase;
     padding:8px 16px;background:rgba(255,255,255,.03);border:1px solid rgba(232,220,192,.25);color:var(--parchment);
     cursor:pointer;transition:all .15s}
@@ -796,6 +805,7 @@
   <div class="screen hidden" id="overlay-levelup">
     <div class="lvl-h" id="lvl-h">Ascension</div>
     <div class="lvl-sub" id="lvl-sub"></div>
+    <div class="lvl-ranks" id="lvl-ranks"></div>
     <div class="cards" id="cards"></div>
     <div class="lvl-econ" id="lvl-econ"></div>
   </div>
@@ -901,6 +911,20 @@ const CFG = {
   DIFF_PER_PLAYER: 0.55,      // [MP] +55% enemy HP & spawn rate per extra player
   ABILITY_CAP: 5,             // five arts, as ever
   UPGRADE_BUDGET: 25,         // total ability ranks you may ever spend — the power ceiling
+  /* PER-ABILITY RANK CAP. Playtest + measurement: one art fed 20+ ranks did
+     97% of a run's damage, because a bolt's damage compounds (dmg x count x
+     cooldown x pierce all multiply) — 8 ranks ~1,100 dps, 20 ranks ~13,000.
+     Capping ranks-per-art forces the budget across 2-3 arts and pulls the top
+     art from ~97% down to ~47% at cap 10 (3 arts), ~31% at cap 8 (4 arts).
+     Cap 12 barely helps (55%). 10 is the sweet spot; drop to 8 to flatten
+     further. This is the main lever that "evens the build out". */
+  RANK_CAP: 10,               // max ranks (upgrades) spendable on any single art
+  /* TYPHON scales to YOUR damage. Playtest: "boss still insta-died." The head
+     pool now adds (your recent DPS x this many seconds) on top of its base HP,
+     so a 13k-dps build faces a proportionally tankier Titan and the finale
+     actually lasts. ~60 => roughly a minute of sustained fire to fell it.
+     Raise toward 90-100 for a longer finale, lower toward 40 for a shorter one. */
+  TYPHON_DPS_SECONDS: 60,
   ITEM_CAP: 5,                // (legacy) — relics now auto-stack with diminishing returns, no hard cap
   ITEM_STACK_MAX: 5,          // (legacy) — stacking past 5 now goes net-negative instead of blocking
   REROLLS: 3,                 // per run — reshuffle the current draft
@@ -915,6 +939,17 @@ const CFG = {
 };
 const DASH = { TIME:0.28, CD:2.6, SPEED:1150, CHARGES:3 };   // 3 charges; each takes CD to refill
 const REPEL = { CD:10, R:220, FORCE:620, STUN:0.8, DMG:12 };  // R-key crowd shove: radius, knockback, stun, light damage
+
+/* WORLD DIMMING — the darkening laid over the ground art. Both default OFF now
+   so you can evaluate ground textures at full strength. If bright gameplay
+   elements ever get hard to read on a busy texture, dial these back up:
+     GROUND_VEIL_ALPHA ~0.22  = flat darkening of the whole ground texture
+     VIGNETTE_ALPHA    ~0.72  = radial darkening toward the screen edges
+   GROUND_TEX_ALPHA is how opaque the texture itself draws (1 = full art,
+   lower lets the solid biome colour bleed through). */
+const GROUND_TEX_ALPHA  = 1.0;   // was 0.9
+const GROUND_VEIL_ALPHA = 0;     // was 0.22
+const VIGNETTE_ALPHA    = 0;     // was 0.72
 
 /* ---------------------------- ELEMENTS ---------------------------------- */
 // role: dmgMult, hp, speed, armor, regen
@@ -998,7 +1033,7 @@ const KITS = {
       base:{ dmg:10, cd:0.78, count:1, speed:470, size:7, pierce:0 }, fits:['dmg','cd','count','pierce','speed','mastery'] },
     { id:'water_undertow', name:'Undertow', shape:'orbit', behav:'orbitStack',
       desc:'Twin vortices drag the swarm off its line as they pass.',
-      base:{ dmg:8, cd:0.4, count:2, size:60, speed:2.4 }, fits:['dmg','cd','size','count','speed','mastery'] },
+      base:{ dmg:8, cd:0.4, count:2, size:60, speed:2.4 }, fits:['dmg','size','count','speed','mastery'] },
     { id:'water_frostbite', name:'Frostbite', shape:'threshold', behav:'freeze',
       desc:'Cold enough that the small ones simply stop.',
       base:{ dmg:10, dur:2.0 }, fits:['dmg','dur','mastery'] },   // dmg is live now, so let it scale
@@ -1056,7 +1091,7 @@ const KITS = {
       base:{ dmg:14, cd:0.95, count:1, speed:380, size:9, pierce:0 }, fits:['dmg','cd','count','pierce','speed','mastery'] },
     { id:'rock_orbitingboulders', name:'Orbiting Boulders', shape:'orbit', behav:'orbitStack',
       desc:'They are not fast. They have never needed to be.',
-      base:{ dmg:13, cd:0.45, count:2, size:62, speed:1.8 }, fits:['dmg','cd','size','count','speed','mastery'] },
+      base:{ dmg:13, cd:0.45, count:2, size:62, speed:1.8 }, fits:['dmg','size','count','speed','mastery'] },
     { id:'rock_tremorfield', name:'Tremor Field', shape:'aura', behav:'auraStagger',
       desc:'The earth under you refuses to hold still.',
       base:{ dmg:8, cd:0.8, size:110 }, fits:['dmg','cd','size','mastery'] },
@@ -1085,7 +1120,7 @@ const KITS = {
       base:{ dmg:9, cd:0.72, count:2, speed:520, size:6, pierce:1 }, fits:['dmg','cd','count','pierce','speed','mastery'] },
     { id:'iron_bladeorbit', name:'Blade Orbit', shape:'orbit', behav:'orbitStack',
       desc:'Edges, turning. Stand too close and you leave shorter.',
-      base:{ dmg:10, cd:0.36, count:3, size:58, speed:2.6 }, fits:['dmg','cd','size','count','speed','mastery'] },
+      base:{ dmg:10, cd:0.36, count:3, size:58, speed:2.6 }, fits:['dmg','size','count','speed','mastery'] },
     { id:'iron_shrapnelfield', name:'Shrapnel Field', shape:'aura', behav:'stackAura',
       desc:'A cloud of hot metal you have trained yourself to stand inside.',
       base:{ dmg:7, cd:0.5, size:100 }, fits:['dmg','cd','size','mastery'] },
@@ -1114,7 +1149,7 @@ const KITS = {
       base:{ dmg:9, cd:0.62, count:1, speed:520, size:6, pierce:0 }, fits:['dmg','cd','count','pierce','speed','mastery'] },
     { id:'sky_cyclonering', name:'Cyclone Ring', shape:'orbit', behav:'momentumOrbit',
       desc:"Small storms circling you at exactly arm's length.",
-      base:{ dmg:8, cd:0.34, count:2, size:64, speed:2.8 }, fits:['dmg','cd','size','count','speed','mastery'] },
+      base:{ dmg:8, cd:0.34, count:2, size:64, speed:2.8 }, fits:['dmg','size','count','speed','mastery'] },
     { id:'sky_updraft', name:'Updraft', shape:'nova', behav:'disorient',
       desc:'The ground throws them off it — and the throwing hurts.',
       base:{ dmg:16, cd:3.6, size:140, dur:1.1 }, fits:['dmg','cd','size','dur','mastery'] },
@@ -1143,7 +1178,7 @@ const KITS = {
       base:{ dmg:10, cd:0.8, count:1, speed:460, size:7, pierce:0 }, fits:['dmg','cd','count','pierce','speed','mastery'] },
     { id:'light_halo', name:'Halo', shape:'orbit', behav:'orbitMark',
       desc:'A ring of dawn, turning, patient.',
-      base:{ dmg:9, cd:0.42, count:2, size:66, speed:1.6 }, fits:['dmg','cd','size','speed','mastery'] },
+      base:{ dmg:9, cd:0.42, count:2, size:66, speed:1.6 }, fits:['dmg','size','speed','mastery'] },
     { id:'light_auraofdawn', name:'Aura of Dawn', shape:'aura', behav:'auraMark',
       desc:'The dark things nearby find it difficult to continue.',
       base:{ dmg:7, cd:0.6, size:100 }, fits:['dmg','cd','size','mastery'] },
@@ -1172,7 +1207,7 @@ const KITS = {
       base:{ dmg:15, cd:0.88, count:1, speed:480, size:7, pierce:0 }, fits:['dmg','cd','count','pierce','speed','mastery'] },
     { id:'shadow_shadeorbit', name:'Shade Orbit', shape:'orbit', behav:'orbitExpose',
       desc:'Pieces of the dark, circling, hungry.',
-      base:{ dmg:12, cd:0.44, count:2, size:56, speed:2.2 }, fits:['dmg','cd','size','count','speed','mastery'] },
+      base:{ dmg:12, cd:0.44, count:2, size:56, speed:2.2 }, fits:['dmg','size','count','speed','mastery'] },
     { id:'shadow_dreadaura', name:'Dread Aura', shape:'aura', behav:'auraWeaken',
       desc:'Being near you is a mistake they only make once.',
       base:{ dmg:9, cd:0.7, size:95 }, fits:['dmg','cd','size','mastery'] },
@@ -1201,7 +1236,7 @@ const KITS = {
       base:{ dmg:7, cd:0.44, count:1, speed:600, size:5, pierce:0 }, fits:['dmg','cd','count','pierce','speed','mastery'] },
     { id:'lightning_arcring', name:'Arc Ring', shape:'orbit', behav:'orbitOverload',
       desc:'Live current, orbiting. Do not lean in.',
-      base:{ dmg:8, cd:0.3, count:3, size:52, speed:3.2 }, fits:['dmg','cd','size','count','speed','mastery'] },
+      base:{ dmg:8, cd:0.3, count:3, size:52, speed:3.2 }, fits:['dmg','size','count','speed','mastery'] },
     { id:'lightning_staticfield', name:'Static Field', shape:'aura', behav:'auraOverload',
       desc:'The air around you is already charged. They complete the circuit.',
       base:{ dmg:6, cd:0.45, size:105 }, fits:['dmg','cd','size','mastery'] },
@@ -1930,7 +1965,7 @@ const ICON_STYLE = {
   shadow:    { edge:'tatter', core:'void'   },
   lightning: { edge:'jag',    core:'spark'  },
 };
-function abilityIcon(shape, c, c2, px, elId){
+function abilityIcon(shape, c, c2, px, elId, abilId){
   const S = 24;
   const cv2 = document.createElement('canvas'); cv2.width=S; cv2.height=S;
   const x = cv2.getContext('2d');
@@ -2046,7 +2081,18 @@ function abilityIcon(shape, c, c2, px, elId){
     default:
       x.beginPath(); x.arc(M,M,5,0,6.2832); x.stroke();
   }
-  return `<img src="${cv2.toDataURL()}" width="${px}" height="${px}" style="image-rendering:auto" alt="">`;
+  const gen = `<img src="${cv2.toDataURL()}" width="${px}" height="${px}" style="image-rendering:auto" alt="">`;
+  // per-ability art override: art/abilities/<id>.webp renders on top of the
+  // generated icon the moment the file exists; if it 404s it hides itself and
+  // the generated icon shows through. Drop a webp in to replace any icon.
+  if(abilId){
+    return `<span style="position:relative;display:inline-block;width:${px}px;height:${px}px;line-height:0">`
+      + gen
+      + `<img src="art/abilities/${abilId}/${abilId}.webp" width="${px}" height="${px}" alt=""`
+      + ` style="position:absolute;left:0;top:0;image-rendering:auto"`
+      + ` onerror="this.style.display='none'"></span>`;
+  }
+  return gen;
 }
 
 /* ----------------------------- ICONS ------------------------------------ */
@@ -2482,13 +2528,20 @@ function spawnTyphon(){
   G.enemies = G.enemies.filter(e => e.boss || e.elite);
   const bx = p.x, by = p.y - 520;
   const hpScaleNow = Math.max(1, hpScale()*0.4);
+  /* DPS-AWARE HEAD HP. Base HP keeps the fight meaningful for a modest build;
+     on top of it we add (recent DPS x TYPHON_DPS_SECONDS), spread across the
+     100-head pool, so the harder you hit the tankier the Titan is — the finale
+     lasts about TYPHON_DPS_SECONDS of sustained fire regardless of build. */
+  const dps = G.dps || 0;
+  const dpsPerHead = (dps * CFG.TYPHON_DPS_SECONDS) / TYPHON.HEAD_POOL;
+  const headHp = TYPHON.HEAD_HP * hpScaleNow + dpsPerHead;
   G.typhon = {
     x:bx, y:by, r:TYPHON.BODY_R,
     phase:'rise', t:0,
     pool: TYPHON.HEAD_POOL,          // heads yet to be spawned
     killed: 0,                       // heads destroyed
     heads: [],                       // active heads
-    headHp: TYPHON.HEAD_HP * hpScaleNow,
+    headHp: headHp,
     attackCd: 3, attacks:[],         // T.attacks — MULTIPLE may run at once from Phase II on
     bodyHurt: 0,
     dead:false, resolved:false,
@@ -4887,21 +4940,39 @@ function tickSeeds(dt){
 function tickOrbits(dt){
   for(const a of G.abilities){
     if(a.def.shape!=='orbit') continue;
-    const n=A(a,'count'), rad=A(a,'size'), spd=A(a,'speed');
+    const n=A(a,'count'), spd=A(a,'speed');
+    /* GEOMETRY FIX (playtest: "orbs do nothing, useless in the dragon ring").
+       The 'Area' upgrade used to grow the ORBIT PATH radius, so every point
+       invested flung the orbs further out — right past the dragons packed
+       against you — and leveling the art made it hit LESS. Now the path radius
+       grows only gently (enough to clear the player), and 'Area' instead
+       fattens each orb's HITBOX, widening the damage band so it overlaps the
+       swarm instead of carving a hairline annulus that whiffs. */
+    const baseRad = a.def.base.size || 60;
+    const rad  = baseRad * 0.82 * (1 + (a.lv-1)*0.03) * (1 + (S.area()-1)*0.3);
+    const hitR = 11 + (a.lv-1)*0.6 + 18*(a.mods.size||0);   // Area = fatter orb, real coverage
     let mul=1;
     if(a.def.behav==='momentumOrbit') mul = 1 + ((G.res||0)/(G.resMax||100))*mastery(a);
-    a.phase = (a.phase||0) + dt*spd*mul;
+    const effSpin = spd*mul;
+    a.phase = (a.phase||0) + dt*effSpin;
     a.oc = a.oc || {};
     _dmgSrc = a.def.id;
+    /* SPIN IS NOW A REAL DPS AXIS. An orb hits a given dragon once per pass;
+       the flat 0.30s re-hit window meant spinning faster added no hits, so
+       'Spin Speed' was a dead upgrade. The window now shortens as the orb
+       spins faster (floored so it can't be abused), so investing speed, count,
+       area or damage all measurably raise output. */
+    const BASE_SPIN = a.def.base.speed || 2;
+    const oc = clamp(0.30 * (BASE_SPIN / Math.max(0.01, effSpin)), 0.20, 0.42);
     for(let i=0;i<n;i++){
       const ang=a.phase + (i/n)*6.2832;
       const ox=G.p.x+Math.cos(ang)*rad, oy=G.p.y+Math.sin(ang)*rad;
-      for(const e of near(ox,oy,26)){
+      for(const e of near(ox,oy,hitR+18)){
         if(!e.alive) continue;
         const k=a.def.id+e.id;
         if((a.oc[k]||0)>0) continue;
-        if(Math.hypot(e.x-ox,e.y-oy) > e.r+13) continue;
-        a.oc[k]=0.30;
+        if(Math.hypot(e.x-ox,e.y-oy) > e.r+hitR) continue;
+        a.oc[k]=oc;
         hit(e, A(a,'dmg')*mul, G.el.c2, ARCH_TYPE.orbit);
         switch(a.def.behav){
           case 'orbitStack':    addStack(e, genStacks(a,1)); break;   // every pass counts
@@ -5742,7 +5813,13 @@ let _dmgSrc = null;
 function hit(e, dmg, c, type){
   if(e.untargetable) return;   // burrowed — it is under the ground, nothing to strike
   // in co-op only the host may change an enemy's health; everyone else asks
-  if(typeof MP!=='undefined' && MP.on && !MP.isHost && !e.typhonHead){ mpReportHit(e, dmg, c, type); return; }
+  if(typeof MP!=='undefined' && MP.on && !MP.isHost && !e.typhonHead){
+    // ...but still meter our OWN output locally (pre-mitigation estimate) — the
+    // host applies the hit, yet the joiner runs its own Typhon finale and needs
+    // a real DPS reading to size it, or the boss insta-dies on the joiner's screen
+    if(dmg > 0) G._dpsAccum = (G._dpsAccum||0) + dmg;
+    mpReportHit(e, dmg, c, type); return;
+  }
   let crit = SIM() < G.stats.crit;
   let d = dmg * (crit ? G.stats.critdmg : 1);
   // Forge's Sunder: stripped scale means every later wound bites deeper
@@ -5761,6 +5838,7 @@ function hit(e, dmg, c, type){
   if(type && e.resist === type){ d *= RESIST_MULT; mark = 'resist'; }
   else if(type && e.weak === type){ d *= WEAK_MULT; mark = 'weak'; }
   if(_dmgSrc && G.dmgBy) G.dmgBy[_dmgSrc] = (G.dmgBy[_dmgSrc]||0) + d;
+  if(d > 0) G._dpsAccum = (G._dpsAccum||0) + d;   // rolling DPS meter (used to scale the Typhon finale)
   if(G.stats.lifesteal > 0 && d > 0 && G.p.hp < G.p.maxhp){
     G.p.hp = Math.min(G.p.maxhp, G.p.hp + d * G.stats.lifesteal);
   }
@@ -6094,7 +6172,12 @@ function spawnTick(dt){
      minutes now feel like a flood, not a plateau. MAX_ENEMIES still guards
      the frame rate. */
   const lateRamp = 1 + Math.max(0, (G.t - 300) / 300) * 1.2;
-  const perSec = 1.6 * spawnScale() * lateRamp * (bossUp ? 0.35 : 1);
+  /* OPENING RAMP (playtest: "I only start seeing dragons ~10s in"). The first
+     seconds were too sparse. This lifts the rate at the very start and eases to
+     normal by ~25s, so the hunt begins immediately without touching mid/late
+     pacing. Combined with the newGame opening seed, dragons are on you at once. */
+  const openBoost = 1 + Math.max(0, (22 - G.t) / 22) * 0.85;
+  const perSec = 1.6 * spawnScale() * lateRamp * openBoost * (bossUp ? 0.35 : 1);
   G.spawnAcc += perSec * dt;
   while(G.spawnAcc >= 1){ G.spawnAcc -= 1; spawnEnemy(); }
 
@@ -6137,6 +6220,18 @@ function spawnTick(dt){
 function update(dt){
   const p = G.p;
   G.t += dt;
+
+  // rolling DPS estimate over the last ~8s — the Typhon finale sizes its HP to
+  // this so a monster build no longer one-shots the Titan (see spawnTyphon)
+  G._dpsT = (G._dpsT||0) + dt;
+  if(G._dpsT >= 1){
+    G._dpsT -= 1;
+    G._dpsWin = G._dpsWin || [];
+    G._dpsWin.push(G._dpsAccum||0);
+    if(G._dpsWin.length > 8) G._dpsWin.shift();
+    G._dpsAccum = 0;
+    G.dps = G._dpsWin.reduce((a,b)=>a+b,0) / G._dpsWin.length;
+  }
 
   // multiplayer: tell the others where I am, and (if host) mirror the world
   if(typeof MP!=='undefined' && MP.on){
@@ -7232,10 +7327,15 @@ function draftOptions(){
   // PHASE 2 — five locked in: randomized-strength upgrades to what you have
   // build every legal art+upgrade pairing, then draw distinct ones — the old
   // version rolled independently and could show you the same card twice
+  // an art at its rank cap can take no more upgrades — this is what forces the
+  // budget to spread across 2-3 arts instead of pouring into one (see CFG.RANK_CAP)
+  const capped = a => (a.lv - 1) >= CFG.RANK_CAP;
   const pairs = [];
-  for(const a of G.abilities)
+  for(const a of G.abilities){
+    if(capped(a)) continue;
     for(const u of UPGRADES)
       if(u.fits(a)) pairs.push({ a, u });
+  }
   const out = [];
   for(let i=0;i<CFG.DRAFT_CHOICES && pairs.length;i++){
     const { a, u } = pairs.splice(rint(0, pairs.length-1), 1)[0];
@@ -7266,6 +7366,7 @@ function openLevelUp(){
   document.getElementById('lvl-sub').textContent = phase1
     ? `${G.abilities.length} of ${CFG.ABILITY_CAP} arts sworn — this choice is permanent`
     : `${budgetLeft()} of ${CFG.UPGRADE_BUDGET} ranks left to spend`;
+  renderRankOverview(phase1);
 
   cards.innerHTML = '';
   opts.forEach(o=>{
@@ -7277,7 +7378,7 @@ function openLevelUp(){
       const ty = ARCH_TYPE[o.def.arch];
       const tc = ty === PHYS ? '#D8C08A' : '#9E8ED8';
       b.innerHTML = `
-        <div class="icon">${abilityIcon(o.def.arch, c, c2, 44, o.def.el)}</div>
+        <div class="icon">${abilityIcon(o.def.arch, c, c2, 44, o.def.el, o.def.id)}</div>
         <div class="tag">New Art · <span style="color:${tc}">${TYPE_LABEL[ty]}</span></div>
         <div class="nm">${o.def.name}</div>
         <div class="ds">${o.def.desc}</div>
@@ -7294,7 +7395,7 @@ function openLevelUp(){
         <!-- pass the ORDER's two colours, not the rarity colour twice: using
              one colour for both base and accent flattened every icon into the
              same shape, so different arts became indistinguishable -->
-        <div class="icon">${abilityIcon(o.a.def.arch, G.el.c, G.el.c2, 44, o.a.def.el)}</div>
+        <div class="icon">${abilityIcon(o.a.def.arch, G.el.c, G.el.c2, 44, o.a.def.el, o.a.def.id)}</div>
         <div class="rar" style="color:${o.rar.c}">${o.rar.name}</div>
         <div class="nm">${o.a.def.name}</div>
         <div class="ds">Rank ${o.a.lv} → ${o.a.lv+1}. ${o.a.def.desc}</div>
@@ -7334,6 +7435,24 @@ function openLevelUp(){
 
   document.getElementById('overlay-levelup').classList.remove('hidden');
 }
+/* RANK OVERVIEW — shown while spending ranks (phase 2). Every sworn art with a
+   pip bar of ranks-spent out of CFG.RANK_CAP, so you can see your whole build
+   at a glance and decide where to spread instead of pouring into one art. An
+   art at the cap is flagged MAX and drops out of the offered upgrades. */
+function renderRankOverview(phase1){
+  const el = document.getElementById('lvl-ranks');
+  if(!el) return;
+  if(phase1){ el.innerHTML = ''; return; }   // still choosing arts — nothing to show yet
+  el.innerHTML = G.abilities.map(a=>{
+    const ranks = a.lv - 1, cap = CFG.RANK_CAP, maxed = ranks >= cap;
+    const pips = Array.from({length:cap}, (_,i)=>`<div class="ra-pip${i<ranks?' on':''}"></div>`).join('');
+    return `<div class="rank-art${maxed?' maxed':''}" title="${a.def.name} — rank ${ranks} of ${cap}">`
+      + `<span class="ra-nm">${a.def.name}</span>`
+      + `<span class="ra-pips">${pips}</span>`
+      + (maxed ? `<span class="ra-max">Max</span>` : `<span class="ra-max" style="color:var(--bone);opacity:.6">${ranks}/${cap}</span>`)
+      + `</div>`;
+  }).join('');
+}
 function closeLevelUp(){
   G.pendingLevels--;
   document.getElementById('overlay-levelup').classList.add('hidden');
@@ -7348,7 +7467,7 @@ function renderAbilBar(){
   bar.innerHTML = G.abilities.map(a=>{
     const ty = ARCH_TYPE[a.def.arch];
     return `<div class="slot" style="border-color:${G.el.c}66;border-bottom:2px solid ${ty===PHYS?'#D8C08A':'#9E8ED8'}"
-      title="${a.def.name} — ${TYPE_LABEL[ty]}">${abilityIcon(a.def.arch, G.el.c, G.el.c2, 22, G.el.id)}<span class="lv">${a.lv}</span></div>`;
+      title="${a.def.name} — ${TYPE_LABEL[ty]}">${abilityIcon(a.def.arch, G.el.c, G.el.c2, 22, G.el.id, a.def.id)}<span class="lv">${a.lv}</span></div>`;
   }).join('') + Array.from({length: Math.max(0, CFG.ABILITY_CAP - G.abilities.length)},
     ()=>`<div class="slot" style="opacity:.28"></div>`).join('');
 }
@@ -7492,7 +7611,24 @@ function getPlayerArt(elId){
     entry = _playerArtCache[elId] = { img:new Image(), ready:false, failed:false };
     entry.img.onload  = ()=>{ entry.ready = true; };
     entry.img.onerror = ()=>{ entry.failed = true; };
-    entry.img.src = 'art/player-' + elId + '.webp';
+    entry.img.src = 'art/players/' + elId + '.webp';   // art/players/<order>.webp
+  }
+  return entry.ready ? entry : null;
+}
+
+/* Dragon art: art/dragons/<key>.webp (bosses and drakes alike). Same lazy
+   load-with-fallback as player art — until the file exists, the hand-drawn
+   pixel sprite keeps rendering, so nothing breaks waiting on art. Drop a boss
+   dragon's webp in art/dragons/<its id>.webp and it takes over automatically. */
+const _dragonArtCache = {};
+function getDragonArt(key){
+  if(!key) return null;
+  let entry = _dragonArtCache[key];
+  if(!entry){
+    entry = _dragonArtCache[key] = { img:new Image(), ready:false, failed:false };
+    entry.img.onload  = ()=>{ entry.ready = true; };
+    entry.img.onerror = ()=>{ entry.failed = true; };
+    entry.img.src = 'art/dragons/' + key + '/' + key + '.webp';   // art/dragons/<id>/<id>.webp
   }
   return entry.ready ? entry : null;
 }
@@ -7505,7 +7641,7 @@ function getGroundTexture(texId){
     entry = _texCache[texId] = { img:new Image(), ready:false, failed:false };
     entry.img.onload  = ()=>{ entry.ready = true; };
     entry.img.onerror = ()=>{ entry.failed = true; };
-    entry.img.src = 'art/' + texId + '.webp';
+    entry.img.src = 'art/ground-texture/' + texId + '.webp';   // art/ground-texture/<tex>.webp
   }
   return entry.ready ? entry : null;
 }
@@ -7519,19 +7655,21 @@ function drawGroundTexture(x0, y0){
   const sx = Math.floor(x0 / TILE) * TILE;
   const sy = Math.floor(y0 / TILE) * TILE;
   ctx.save();
-  ctx.globalAlpha = 0.9;                   // let a hint of the bg colour bleed through
+  ctx.globalAlpha = GROUND_TEX_ALPHA;      // full-strength art (was 0.9)
   for(let x = sx; x < x0 + W + TILE; x += TILE){
     for(let y = sy; y < y0 + H + TILE; y += TILE){
       ctx.drawImage(img, x, y, TILE, TILE);
     }
   }
   ctx.restore();
-  // a subtle darkening veil so bright gameplay elements read on top of detail
-  ctx.save();
-  ctx.globalAlpha = 0.22;
-  ctx.fillStyle = '#000';
-  ctx.fillRect(x0 - TILE, y0 - TILE, W + TILE*2, H + TILE*2);
-  ctx.restore();
+  // optional darkening veil so bright gameplay elements read on top of detail
+  if(GROUND_VEIL_ALPHA > 0){
+    ctx.save();
+    ctx.globalAlpha = GROUND_VEIL_ALPHA;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(x0 - TILE, y0 - TILE, W + TILE*2, H + TILE*2);
+    ctx.restore();
+  }
 }
 
 function render(){
@@ -8025,7 +8163,19 @@ function render(){
     // scale the map so it fills the enemy's radius; frame flips on phase
     const scale = (e.r * 2) / (def.w * def.cell) * 1.15;
     const frame = (e.ph * (fly ? 1.4 : 0.9) | 0) & 1;
-    drawSprite(def, frame, e.x, y, pal, scale, flash);
+    // bespoke dragon art overrides the pixel sprite the moment its file exists
+    const dart = getDragonArt(e.key);
+    if(dart){
+      const R = e.r * 2.3, faceLeft = e.x < G.p.x;
+      ctx.save();
+      ctx.translate(e.x, y);
+      if(faceLeft) ctx.scale(-1, 1);
+      if(flash){ ctx.globalAlpha = 1; }
+      ctx.drawImage(dart.img, -R/2, -R/2, R, R);
+      ctx.restore();
+    } else {
+      drawSprite(def, frame, e.x, y, pal, scale, flash);
+    }
 
     if(e.elite){
       // soft menacing glow instead of a hard ring — reads as "elite" without clashing
@@ -8174,8 +8324,12 @@ function render(){
      engine no longer fills — it computes positions from phase each tick. */
   for(const a of G.abilities){
     if(a.def.shape!=='orbit') continue;
-    const n=A(a,'count'), rad=A(a,'size');
-    const sz = Math.max(5, A(a,'size')*0.20);
+    const n=A(a,'count');
+    // mirror tickOrbits: gentle path radius, orb visual sized to its real hitbox
+    const baseRad = a.def.base.size || 60;
+    const rad  = baseRad * 0.82 * (1 + (a.lv-1)*0.03) * (1 + (S.area()-1)*0.3);
+    const hitR = 11 + (a.lv-1)*0.6 + 18*(a.mods.size||0);
+    const sz = Math.max(6, hitR*0.9);
     for(let i=0;i<n;i++){
       const ang=(a.phase||0)+(i/n)*6.2832;
       const ox=G.p.x+Math.cos(ang)*rad, oy=G.p.y+Math.sin(ang)*rad;
@@ -8302,10 +8456,12 @@ function render(){
   }
   ctx.restore();
 
-  // vignette
-  const vg = ctx.createRadialGradient(W/2,H/2,H*0.35,W/2,H/2,H*0.9);
-  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,.72)');
-  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+  // vignette (radial edge darkening) — optional, see VIGNETTE_ALPHA
+  if(VIGNETTE_ALPHA > 0){
+    const vg = ctx.createRadialGradient(W/2,H/2,H*0.35,W/2,H/2,H*0.9);
+    vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(0,0,0,'+VIGNETTE_ALPHA+')');
+    ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+  }
 
   // first-encounter banner (screen space, after the camera transform is popped)
   if(G.banner){
@@ -9665,7 +9821,7 @@ function orderArt(el){
   const fallbackOnly = `<div class="cx-art-fallback">${fb}</div>`;
   if(_missingArt.has(el.id)) return fallbackOnly;   // already known missing — don't ask again
   return fallbackOnly +
-    `<img class="cx-art-img" src="art/${el.id}.webp" alt="${el.name} Order"
+    `<img class="cx-art-img" src="art/orders/${el.id}.webp" alt="${el.name} Order"
        onerror="this.style.display='none'; markArtMissing('${el.id}');">`;
 }
 function renderCodex(){
@@ -9673,7 +9829,7 @@ function renderCodex(){
   const body = document.getElementById('codex-body');
   const arts = el.abilities.map((a,i)=>`
     <div class="art" style="border-color:${el.c}2E">
-      <div class="ic">${abilityIcon(a.arch, el.c, el.c2, 30, el.id)}</div>
+      <div class="ic">${abilityIcon(a.arch, el.c, el.c2, 30, el.id, a.id)}</div>
       <div>
         <div class="tp">${ARCH_LABEL[a.arch]} · <span style="color:${ARCH_TYPE[a.arch]===PHYS?'#D8C08A':'#9E8ED8'}">${TYPE_LABEL[ARCH_TYPE[a.arch]]}</span></div>
         <div class="nm" style="color:${el.c2}">${a.name}</div>
@@ -9765,6 +9921,11 @@ function start(el, seed){
     ? (Date.now() ^ (performance.now()*1000|0)) >>> 0
     : seed >>> 0;
   G = newGame(el, useSeed);
+  // opening seed: a few dragons already closing in as the run begins, so the
+  // first moments have something to fight instead of ~10s of empty field
+  if(!(typeof MP!=='undefined' && MP.on && !MP.isHost)){
+    for(let i=0;i<4;i++) spawnEnemy();
+  }
   G.pendingLevels = 0;
   document.getElementById('screen-select').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
@@ -9816,7 +9977,7 @@ function gameOver(won){
     abilWrap.innerHTML = G.abilities.length
       ? G.abilities.map(a=>{
           const ty = ARCH_TYPE[a.def.arch];
-          return `<div class="gi" title="${a.def.name} (Lv ${a.lv})" style="border-color:${ty===PHYS?'#D8C08A':'#9E8ED8'}">${abilityIcon(a.def.arch, G.el.c, G.el.c2, 18, G.el.id)}<span class="ct">${a.lv}</span></div>`;
+          return `<div class="gi" title="${a.def.name} (Lv ${a.lv})" style="border-color:${ty===PHYS?'#D8C08A':'#9E8ED8'}">${abilityIcon(a.def.arch, G.el.c, G.el.c2, 18, G.el.id, a.def.id)}<span class="ct">${a.lv}</span></div>`;
         }).join('')
       : `<span class="none">none sworn</span>`;
   }
